@@ -9,7 +9,7 @@ Implementation: Plain Python, rule-based, no LLM API.
 
 ## Module 1 — Query Understanding
 
-**Owner:** Member 1
+**Owner:** Jixuan Liu
 
 **File:** `agent/query_parser.py`
 
@@ -105,7 +105,7 @@ Expected:
 
 ## Module 2 — RAG Tool Integration
 
-**Owner:** Member 2
+**Owner:** Jiahui Yang
 
 **File:** `agent/tools/rag_tool.py`
 
@@ -241,7 +241,7 @@ Before real retriever integration, confirm:
 
 ## Module 3 — Conditional Routing
 
-**Owner:** Member 3
+**Owner:** Lidan Yu
 
 **File:** `agent/routing.py`
 
@@ -389,7 +389,7 @@ Other AgentState fields must remain unchanged.
 
 ## Module 4 — State Management & Execution Logging
 
-**Owner:** Member 4
+**Owner:** Lingfei Zhang
 
 **Files:**
 - `agent/state.py`
@@ -542,7 +542,7 @@ appear in a separate AgentState instance.
 
 ## Module 5 — Testing & Quality Assurance
 
-**Owner:** Member 5
+**Owner:** Yichen Liu
 
 **Directory:** `tests/`
 
