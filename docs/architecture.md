@@ -63,11 +63,11 @@ the orchestrator records the error and routes to ERROR.
 
 | Module | File | Owner |
 |---|---|---|
-| Query Understanding | agent/query_parser.py | Member 1 |
-| RAG Tool Integration | agent/tools/rag_tool.py | Member 2 |
-| Conditional Routing | agent/routing.py | Member 3 |
-| State & Logging | agent/state.py, agent/logging_utils.py | Member 4 |
-| Testing & QA | tests/ | Member 5 |
+| Query Understanding | agent/query_parser.py | Jixuan Liu |
+| RAG Tool Integration | agent/tools/rag_tool.py | Jiahui Yang |
+| Conditional Routing | agent/routing.py | Lidan Yu |
+| State & Logging | agent/state.py, agent/logging_utils.py | Lingfei Zhang |
+| Testing & QA | tests/ | Yichen Liu |
 | Workflow Orchestration | agent/workflow.py | Team Leads |
 | Entry Point | main.py | Team Leads |
 
