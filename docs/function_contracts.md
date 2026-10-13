@@ -234,3 +234,152 @@ Before real retriever integration, confirm:
 4. Whether filtering supports ticker, fiscal_year,
    and fiscal_period.
 ```
+
+
+
+---
+
+## Module 3 — Conditional Routing
+
+**Owner:** Member 3
+
+**File:** `agent/routing.py`
+
+### Function Signature
+
+```python
+from agent.state import AgentState
+
+def route_result(state: AgentState) -> AgentState:
+    """Determine workflow status from evidence and errors."""
+```
+
+### Input
+
+- `state`: AgentState object containing retrieval results.
+
+Relevant state fields:
+- `state.evidence`
+- `state.error`
+- `state.status`
+
+### Output
+
+Return the same AgentState object with an updated status.
+
+Allowed final statuses:
+- SUCCESS
+- NO_EVIDENCE
+- ERROR
+
+### Routing Rules
+
+1. If state.error is not None:
+   - Set status to ERROR.
+
+2. Otherwise, if state.evidence contains one or more items:
+   - Set status to SUCCESS.
+
+3. Otherwise:
+   - Set status to NO_EVIDENCE.
+
+4. Do not modify query, filters, top_k, or evidence.
+
+5. Do not call the RAG tool or LLM API.
+
+### Workflow Integration
+
+The workflow will call:
+
+```python
+state = route_result(state)
+```
+
+If query parsing or retrieval raises an exception,
+workflow.py is responsible for capturing it:
+
+```python
+try:
+    # Query parsing and retrieval
+    ...
+except Exception as exc:
+    state.error = str(exc)
+
+state = route_result(state)
+```
+
+### Acceptance Tests
+
+**Case 1: Success**
+
+Input:
+```python
+state.evidence = [
+    {"text": "Revenue evidence", "metadata": {"source": "10-Q"}}
+]
+state.error = None
+```
+
+Expected:
+```python
+state.status == "SUCCESS"
+```
+
+**Case 2: No Evidence**
+
+Input:
+```python
+state.evidence = []
+state.error = None
+```
+
+Expected:
+```python
+state.status == "NO_EVIDENCE"
+```
+
+**Case 3: Error**
+
+Input:
+```python
+state.error = "top_k must be greater than zero"
+state.evidence = []
+```
+
+Expected:
+```python
+state.status == "ERROR"
+```
+
+**Case 4: Error Takes Priority**
+
+Input:
+```python
+state.error = "Retrieval failed"
+state.evidence = [{"text": "Partial evidence", "metadata": {}}]
+```
+
+Expected:
+```python
+state.status == "ERROR"
+```
+
+### Error Handling
+
+- Routing does not catch retrieval exceptions.
+- Routing does not create error messages.
+- If state.error is present, ERROR takes priority.
+- Routing only updates state.status.
+- The same AgentState instance is returned.
+
+### State Ownership
+
+Owned field:
+- `state.status`
+
+Read-only fields:
+- `state.evidence`
+- `state.error`
+
+Other AgentState fields must remain unchanged.
+```
