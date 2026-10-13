@@ -7,7 +7,7 @@
 
 **Architecture:** Rule-based Single-Agent Workflow
 
-**Implementation:** Plain Python
+**Implementation:** LangChain Core + Plain Python
 
 ## 1. Objective
 
