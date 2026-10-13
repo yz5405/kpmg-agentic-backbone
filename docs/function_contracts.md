@@ -536,3 +536,134 @@ appear in a separate AgentState instance.
 - Logging does not determine workflow status.
 - Workflow-level exceptions are handled by workflow.py.
 ```
+
+
+---
+
+## Module 5 — Testing & Quality Assurance
+
+**Owner:** Member 5
+
+**Directory:** `tests/`
+
+### Objective
+
+Validate that all Agentic Backbone modules comply
+with their function contracts and work together.
+
+Use pytest. No LLM API or real SEC database required.
+
+### Test Files
+
+- tests/test_query_parser.py
+- tests/test_rag_tool.py
+- tests/test_routing.py
+- tests/test_logging.py
+- tests/test_workflow.py
+
+Keep existing tests/test_skeleton.py.
+
+### Testing Framework
+
+pytest
+
+Run from repository root:
+
+```bash
+python -m pytest tests/ -v
+```
+
+### Unit Test Requirements
+
+#### Query Parser
+
+Test:
+1. Complete financial filters.
+2. Partial financial filters.
+3. Unrecognized financial filters.
+4. Empty query raises ValueError.
+5. Invalid input type raises ValueError.
+
+#### RAG Tool
+
+Test:
+1. Successful retrieval with source metadata.
+2. Empty retrieval returns [].
+3. Invalid top_k raises ValueError.
+4. Unexpected retriever errors propagate.
+5. Retrieved source metadata is preserved.
+
+Use mock retrieval responses.
+Do not access real SEC filings or external APIs.
+
+#### Routing
+
+Test:
+1. Evidence found -> SUCCESS.
+2. Empty evidence -> NO_EVIDENCE.
+3. Error present -> ERROR.
+4. Error takes priority over evidence.
+5. Other AgentState fields remain unchanged.
+
+#### Execution Logging
+
+Test:
+1. Default INFO log.
+2. ERROR log.
+3. Lowercase level normalization.
+4. Unsupported level raises ValueError.
+5. Independent state log lists.
+
+### Integration Tests
+
+Integration tests will be finalized with Team Leads
+after workflow.py is implemented.
+
+Minimum end-to-end scenarios:
+
+1. Microsoft Q3 FY2026:
+   Expected SUCCESS with evidence and metadata.
+
+2. Microsoft FY2025:
+   Expected NO_EVIDENCE.
+
+3. Invalid top_k = 0:
+   Expected ERROR with an error message.
+
+Tests must use deterministic mock retrieval fixtures.
+No external service or API calls are allowed.
+
+### Development Rules
+
+1. Follow docs/function_contracts.md.
+2. Use pytest.
+3. Keep tests deterministic and reproducible.
+4. Do not modify production modules without approval.
+5. Report interface mismatches to Team Leads.
+6. Test both expected behavior and error cases.
+7. Do not add LLM, SQL, GraphRAG, or Multi-Agent tests.
+8. Coordinate workflow integration tests with Team Leads.
+
+### Acceptance Criteria
+
+- All unit tests pass.
+- All three MVP integration scenarios pass.
+- No external credentials are needed.
+- Tests run using the documented command.
+- Failures clearly identify the module or contract issue.
+
+### Deliverables
+
+By October 19:
+- Initial unit tests for assigned modules.
+- List of failed tests or interface issues.
+
+By October 20:
+- Initial end-to-end integration test results.
+
+By October 21:
+- Regression testing and bug fixes verification.
+
+By October 22:
+- Working MVP demo passes all required tests.
+```
