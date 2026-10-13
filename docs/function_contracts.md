@@ -383,3 +383,156 @@ Read-only fields:
 
 Other AgentState fields must remain unchanged.
 ```
+
+
+---
+
+## Module 4 — State Management & Execution Logging
+
+**Owner:** Member 4
+
+**Files:**
+- `agent/state.py`
+- `agent/logging_utils.py`
+
+### Shared State
+
+The shared AgentState structure was defined and tested
+by Team Leads in Step 2.
+
+Member 4 must preserve the existing AgentState fields
+and create_initial_state() interface.
+
+Any schema change requires Team Lead approval.
+
+### Function Signature
+
+```python
+from agent.state import AgentState
+
+def log_event(
+    state: AgentState,
+    message: str,
+    level: str = "INFO"
+) -> None:
+    """Append a formatted execution log to AgentState."""
+```
+
+### Input
+
+- `state`: Shared AgentState object.
+- `message`: Description of an execution event.
+- `level`: Log severity, default INFO.
+
+### Output
+
+Returns None.
+
+Appends one formatted string to state.logs.
+
+### Supported Levels
+
+- INFO
+- WARNING
+- ERROR
+
+### Example
+
+```python
+state = create_initial_state("Microsoft Q3 FY2026")
+
+log_event(state, "Query parsing started")
+
+assert state.logs == [
+    "[INFO] Query parsing started"
+]
+```
+
+### Requirements
+
+1. Use Python standard library only.
+2. Append messages to state.logs in execution order.
+3. Format logs as "[LEVEL] message".
+4. Default level is INFO.
+5. Accept INFO, WARNING, and ERROR.
+6. Normalize lowercase log levels to uppercase.
+7. Raise ValueError for unsupported levels.
+8. Do not modify any other AgentState fields.
+9. Do not log API keys, credentials, or sensitive data.
+10. Do not implement persistent storage or session memory.
+
+### State Ownership
+
+Member 4 owns:
+- state.logs
+
+Member 4 maintains but must not independently redesign:
+- AgentState schema
+- create_initial_state()
+
+Member 4 does not own:
+- state.filters
+- state.evidence
+- state.status
+- state.error
+
+### Workflow Integration
+
+```python
+log_event(state, "Query parsing started")
+
+state.filters = understand_query(state.query)
+
+log_event(state, "Query parsing completed")
+```
+
+The workflow is responsible for deciding
+when logging functions are called.
+
+### Acceptance Tests
+
+**Case 1: Default INFO**
+
+```python
+log_event(state, "Workflow started")
+
+assert state.logs[-1] == "[INFO] Workflow started"
+```
+
+**Case 2: ERROR Logging**
+
+```python
+log_event(state, "Retrieval failed", level="ERROR")
+
+assert state.logs[-1] == "[ERROR] Retrieval failed"
+```
+
+**Case 3: Lowercase Level**
+
+```python
+log_event(state, "No evidence found", level="warning")
+
+assert state.logs[-1] == "[WARNING] No evidence found"
+```
+
+**Case 4: Invalid Level**
+
+```python
+import pytest
+
+with pytest.raises(ValueError):
+    log_event(state, "Test", level="DEBUG")
+```
+
+**Case 5: State Independence**
+
+Logs recorded for one AgentState must not
+appear in a separate AgentState instance.
+
+### Error Handling
+
+- Unsupported log level raises ValueError.
+- Logging errors are not silently ignored.
+- Logging does not determine workflow status.
+- Workflow-level exceptions are handled by workflow.py.
+```
