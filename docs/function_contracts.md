@@ -99,3 +99,138 @@ Expected:
 - Valid string inputs without recognizable filters return None values.
 - Empty or non-string input raises ValueError.
 - Workflow-level error routing is handled separately.
+
+
+---
+
+## Module 2 — RAG Tool Integration
+
+**Owner:** Member 2
+
+**File:** `agent/tools/rag_tool.py`
+
+### Function Signature
+
+```python
+def retrieve_evidence(
+    query: str,
+    filters: dict | None = None,
+    top_k: int = 10
+) -> list[dict]:
+    """Retrieve and normalize evidence from the RAG tool."""
+```
+
+### Upstream RAG Contract
+
+The RAG Team provides the following agreed interface:
+
+```python
+retrieve(
+    query: str,
+    filters: dict | None = None,
+    top_k: int = 10
+) -> list[RetrievedChunk]
+```
+
+### Input
+
+- `query`: Original user question.
+- `filters`: Financial filters extracted by query_parser.py.
+- `top_k`: Maximum number of evidence chunks.
+
+### Output
+
+Return a list of normalized evidence dictionaries.
+
+Proposed internal evidence structure:
+
+```python
+[
+    {
+        "text": "Example financial filing excerpt...",
+        "metadata": {
+            "ticker": "MSFT",
+            "fiscal_year": 2026,
+            "fiscal_period": "Q3",
+            "source": "10-Q"
+        }
+    }
+]
+```
+
+The exact RetrievedChunk fields must be confirmed
+with the RAG Team before implementing the adapter.
+
+### Requirements
+
+1. Use the existing RAG Mock Retriever for MVP.
+2. Do not implement a new retrieval engine.
+3. Accept query, filters, and top_k.
+4. Return normalized evidence dictionaries.
+5. Preserve available source metadata.
+6. Return an empty list if no evidence is found.
+7. Raise ValueError if top_k <= 0.
+8. Propagate unexpected retrieval errors.
+9. Do not generate an LLM answer.
+10. Do not modify AgentState directly.
+
+### State Integration
+
+The workflow will call:
+
+```python
+state.evidence = retrieve_evidence(
+    query=state.query,
+    filters=state.filters,
+    top_k=state.top_k
+)
+```
+
+### Acceptance Tests
+
+**Case 1: Successful Retrieval**
+
+Input: Microsoft Q3 FY2026
+
+Expected:
+- Returns a non-empty list.
+- Each evidence item contains text and metadata.
+- Available source metadata is preserved.
+
+**Case 2: No Evidence**
+
+Input: Microsoft FY2025
+
+Expected (using the agreed MVP mock fixture):
+```python
+[]
+```
+
+**Case 3: Invalid top_k**
+
+Input: top_k = 0
+
+Expected:
+```python
+ValueError
+```
+
+### Error Handling
+
+- Non-empty evidence list: workflow may route to SUCCESS.
+- Empty evidence list: workflow routes to NO_EVIDENCE.
+- Invalid top_k or retrieval exception: workflow handles ERROR.
+
+The adapter raises exceptions but does not set
+workflow status itself.
+
+### RAG Team Coordination
+
+Before real retriever integration, confirm:
+
+1. RetrievedChunk field names and types.
+2. Available source metadata fields.
+3. Python import path and dependencies.
+4. Whether filtering supports ticker, fiscal_year,
+   and fiscal_period.
+```
