@@ -43,15 +43,33 @@ def _to_evidence(chunk: dict) -> dict:
     return {"text": chunk["text"], "metadata": metadata}
 
 
+
 def retrieve_evidence(
     query: str,
     filters: dict | None = None,
-    top_k: int = 10,
+    top_k: int = 8,
 ) -> list[dict]:
-    """Retrieve and normalize evidence from the RAG tool."""
-    if isinstance(top_k, int) and not isinstance(top_k, bool) and top_k <= 0:
+    """Retrieve and normalize SEC filing evidence."""
+
+    # Validate retrieval parameters
+    if isinstance(top_k, bool) or not isinstance(top_k, int):
+        raise ValueError("top_k must be a positive integer")
+
+    if top_k < 1:
         raise ValueError("top_k must be greater than zero")
 
+    if top_k > 50:
+        raise ValueError("top_k must be <= 50")
+
+    # Select Mock or Real Retriever
     retrieve = _load_retriever()
-    chunks = retrieve(query=query, filters=filters, top_k=top_k)
+
+    # Execute retrieval
+    chunks = retrieve(
+        query=query,
+        filters=filters,
+        top_k=top_k,
+    )
+
+    # Preserve text and citation metadata
     return [_to_evidence(chunk) for chunk in chunks]
