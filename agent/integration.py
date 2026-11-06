@@ -13,7 +13,8 @@ from agent.query_parser import understand_query
 from agent.tools.rag_tool import retrieve_evidence
 from agent.routing import determine_status
 from agent.logging_utils import format_log_event
-
+from agent.tool_router import make_routed_retriever
+from agent.tools.graphrag_adapter import retrieve_graph_evidence
 
 def run_integrated_agent(
     query: str,
@@ -25,13 +26,16 @@ def run_integrated_agent(
         mock (default): bundled mock retriever
         real: RAG Team's retrieve() with RAG_INDEX_DIR configured
     """
-
+    routed_retriever = make_routed_retriever(
+    rag_retriever=retrieve_evidence,
+    graphrag_retriever=retrieve_graph_evidence,
+)
     # Run LangGraph with actual team implementations.
     result = run_graph_agent(
         query=query,
         top_k=top_k,
         parser=understand_query,
-        retriever=retrieve_evidence,
+        retriever=routed_retriever,
         router=determine_status,
     )
 
