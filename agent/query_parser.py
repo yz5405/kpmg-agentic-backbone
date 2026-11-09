@@ -18,8 +18,25 @@ COMPANY_TICKERS = {
 # Tickers recognized directly in the question.
 KNOWN_TICKERS = set(COMPANY_TICKERS.values())
 
+# Raw ticker aliases that resolve to a canonical ticker (e.g. GOOG -> GOOGL).
+TICKER_ALIASES = {
+    "GOOG": "GOOGL",
+}
+
 _YEAR_RE = re.compile(r"\b(?:FY|fiscal\s+year)\s*(\d{4})", re.IGNORECASE)
+# Fallback for a bare 4-digit year ("Tesla Q3 2026") with no "FY" anchor. The
+# lookbehind keeps a dollar amount like "$2026 million" from being read as a year.
+_BARE_YEAR_RE = re.compile(r"(?<![\d$])\b(20\d{2})\b")
 _QUARTER_RE = re.compile(r"\bQ([1-4])\b", re.IGNORECASE)
+# Spelled-out period forms mapped to the compact Q1-Q4 / FY vocabulary.
+_SPELLED_PERIODS = {
+    "annual": "FY",
+    "full year": "FY",
+    "first quarter": "Q1",
+    "second quarter": "Q2",
+    "third quarter": "Q3",
+    "fourth quarter": "Q4",
+}
 
 
 
@@ -61,13 +78,13 @@ def _extract_ticker(query: str) -> str | None:
         if re.search(rf"\b{re.escape(name)}\b", text):
             return ticker
 
-    for ticker in KNOWN_TICKERS:
+    for ticker in sorted(KNOWN_TICKERS | set(TICKER_ALIASES)):
         if re.search(
             rf"\b{re.escape(ticker)}\b",
             query,
             re.IGNORECASE,
         ):
-            return ticker
+            return TICKER_ALIASES.get(ticker, ticker)
 
     return None
 
@@ -75,9 +92,18 @@ def _extract_ticker(query: str) -> str | None:
 
 def _extract_fiscal_year(query: str) -> int | None:
     match = _YEAR_RE.search(query)
+    if match:
+        return int(match.group(1))
+    match = _BARE_YEAR_RE.search(query)
     return int(match.group(1)) if match else None
 
 
 def _extract_fiscal_period(query: str) -> str | None:
     match = _QUARTER_RE.search(query)
-    return f"Q{match.group(1)}" if match else None
+    if match:
+        return f"Q{match.group(1)}"
+    lowered = query.lower()
+    for phrase, period in _SPELLED_PERIODS.items():
+        if re.search(rf"\b{re.escape(phrase)}\b", lowered):
+            return period
+    return None
