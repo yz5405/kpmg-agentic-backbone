@@ -6,7 +6,7 @@
 ## 如何运行 demo
 
 **后端入口：`app/main.py`。网页文件：`app/static/index.html`。**
-先按下面的命令启动后端，再在浏览器打开 **http://localhost:8000**，即可使用 demo。
+先按下面的命令启动后端，再在浏览器打开 http://localhost:8000，即可使用 demo。
 双击 HTML 文件只能预览界面，不能启动问答服务；也不需要直接双击或执行 `app/main.py`。
 
 需要 Python 3.12。在本项目根目录打开终端，即同时包含 `requirements.txt` 和 `Dockerfile` 的文件夹。如果上传在仓库的 `demo/runnable/` 下，请先进入该目录。
