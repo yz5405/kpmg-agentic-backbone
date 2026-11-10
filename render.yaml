@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: kpmg-financial-explorer-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: KPMG_RAG_BACKEND
+        value: mock
+      - key: KPMG_GRAPH_BACKEND
+        value: mock
+      - key: KPMG_MODEL_BACKEND
+        value: offline
