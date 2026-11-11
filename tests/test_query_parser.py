@@ -102,3 +102,52 @@ def test_no_false_positive_on_metadata():
 def test_no_false_positive_on_pineapple():
     """"apple" must not match inside "pineapple"."""
     assert understand_query("pineapple revenue")["ticker"] is None
+
+
+# --------------------------------------------------
+# Fixes: bare year, spelled-out periods, ticker aliases
+# --------------------------------------------------
+
+def test_bare_year_without_fy():
+    """A bare 4-digit year is extracted even without a 'FY' anchor."""
+    assert understand_query("Tesla Q3 2026") == {
+        "ticker": "TSLA",
+        "fiscal_year": 2026,
+        "fiscal_period": "Q3",
+    }
+
+
+def test_bare_year_ignores_dollar_amount():
+    """A dollar amount that looks like a year is not read as a year."""
+    assert understand_query("Microsoft revenue was $2026 million") == {
+        "ticker": "MSFT",
+        "fiscal_year": None,
+        "fiscal_period": None,
+    }
+
+
+def test_spelled_out_quarter():
+    """'fourth quarter' is mapped to Q4."""
+    assert understand_query("Microsoft fourth quarter 2026") == {
+        "ticker": "MSFT",
+        "fiscal_year": 2026,
+        "fiscal_period": "Q4",
+    }
+
+
+def test_annual_period():
+    """'annual report' maps to fiscal_period 'FY'."""
+    assert understand_query("Microsoft annual report 2026") == {
+        "ticker": "MSFT",
+        "fiscal_year": 2026,
+        "fiscal_period": "FY",
+    }
+
+
+def test_goog_alias():
+    """'GOOG' resolves to the canonical 'GOOGL' ticker."""
+    assert understand_query("GOOG Q4 FY2025") == {
+        "ticker": "GOOGL",
+        "fiscal_year": 2025,
+        "fiscal_period": "Q4",
+    }
