@@ -8,7 +8,7 @@ from agent.tools.rag_tool import _to_evidence
 def retrieve_structured_evidence(
     query: str,
     filters: dict | None = None,
-    top_k: int = 8,
+    top_k: int = 10,
 ) -> list[dict]:
     """Call the registered GraphRAG structured backend when fallback runs."""
     from graphrag.retrieve import structured_search

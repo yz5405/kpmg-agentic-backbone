@@ -58,7 +58,7 @@ def _to_evidence(chunk: dict) -> dict:
 def retrieve_evidence(
     query: str,
     filters: dict | None = None,
-    top_k: int = 8,
+    top_k: int = 10,
 ) -> list[dict]:
     """Retrieve and normalize SEC filing evidence as a list."""
     return retrieve_evidence_result(query, filters, top_k)["evidence"]
@@ -67,7 +67,7 @@ def retrieve_evidence(
 def retrieve_evidence_result(
     query: str,
     filters: dict | None = None,
-    top_k: int = 8,
+    top_k: int = 10,
 ) -> RetrievalResult:
     """Normalize evidence and carry the RAG team's optional retrieval signals."""
 

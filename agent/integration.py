@@ -19,7 +19,7 @@ from agent.logging_utils import format_log_event
 
 def run_integrated_agent(
     query: str,
-    top_k: int = 8,
+    top_k: int = 10,
     *,
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
