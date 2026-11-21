@@ -16,7 +16,7 @@ app = FastAPI(
 
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
-    top_k: int = Field(default=10, ge=1, le=50)
+    top_k: int = Field(default=15, ge=1, le=50)
     trace_id: str | None = None
 
 @app.get("/health")
@@ -40,18 +40,19 @@ def query_agent(request: QueryRequest):
         **workflow_options,
     )
 
-    citations = []
-    for item in result.get("evidence", []):
-        metadata = item.get("metadata", {})
-        source_url = metadata.get("source_url")
-        if source_url:
-            citations.append({
-                "source_url": source_url,
-                "ticker": metadata.get("ticker"),
-                "form": metadata.get("form"),
-                "fiscal_year": metadata.get("fiscal_year"),
-                "fiscal_period": metadata.get("fiscal_period"),
-            })
+    citations = result.get("citations") or []
+    if not citations:
+        for item in result.get("evidence", []):
+            metadata = item.get("metadata", {})
+            source_url = metadata.get("source_url")
+            if source_url:
+                citations.append({
+                    "source_url": source_url,
+                    "ticker": metadata.get("ticker"),
+                    "form": metadata.get("form"),
+                    "fiscal_year": metadata.get("fiscal_year"),
+                    "fiscal_period": metadata.get("fiscal_period"),
+                })
 
     return {
         "query": request.query,
@@ -62,7 +63,11 @@ def query_agent(request: QueryRequest):
 	"fallback_triggered": result.get("should_try_graphrag", False),
 	"fallback_used": bool(result.get("graphrag_evidence")),
         "filters": result.get("filters", {}),
-        "answer": None,
+        "answer": result.get("answer"),
+        "query_understanding_mode": result.get("query_understanding_mode"),
+        "model": result.get("model"),
+        "llm_calls": result.get("llm_calls", 0),
+        "token_usage": result.get("token_usage"),
         "evidence": result.get("evidence", []),
 	"citations": citations,
         "logs": result.get("logs", []),

@@ -5,14 +5,19 @@ import re
 # Supported company name -> ticker mapping.
 # Keep this in sync with the ticker universe the RAG team actually retrieves.
 COMPANY_TICKERS = {
-    "microsoft": "MSFT",
     "apple": "AAPL",
-    "google": "GOOGL",
-    "alphabet": "GOOGL",
-    "amazon": "AMZN",
-    "meta": "META",
-    "nvidia": "NVDA",
-    "tesla": "TSLA",
+    "casey's": "CASY",
+    "caseys": "CASY",
+    "mckesson": "MCK",
+    "medtronic": "MDT",
+    "microsoft": "MSFT",
+    "micron": "MU",
+    "nike": "NKE",
+    "netapp": "NTAP",
+    "parker-hannifin": "PH",
+    "parker hannifin": "PH",
+    "take-two": "TTWO",
+    "take two": "TTWO",
 }
 
 # Tickers recognized directly in the question.

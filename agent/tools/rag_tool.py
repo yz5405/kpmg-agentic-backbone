@@ -33,12 +33,22 @@ class RetrievalResult(TypedDict):
     weak_reasons: list[str]
 
 
-def _load_retriever():
-    """Prefer the status-aware real RAG entry point when available."""
+def _load_retriever(filters: dict | None = None):
+    """Select the real single- or multi-target RAG entry point when available."""
     if os.getenv("KPMG_RAG_BACKEND", "mock") == "real":
         from importlib import import_module
 
         backend = import_module("rag.retrieve")
+        split_keys = ("ticker", "form", "fiscal_year", "fiscal_period")
+        multi_target = any(
+            isinstance((filters or {}).get(key), (list, tuple, set))
+            and len((filters or {}).get(key)) > 1
+            for key in split_keys
+        )
+
+        if multi_target and hasattr(backend, "retrieve_multi"):
+            return backend.retrieve_multi
+
         return getattr(backend, "retrieve_with_status", backend.retrieve)
 
     from agent.tools.mock_retriever import retrieve
@@ -58,7 +68,7 @@ def _to_evidence(chunk: dict) -> dict:
 def retrieve_evidence(
     query: str,
     filters: dict | None = None,
-    top_k: int = 10,
+    top_k: int = 15,
 ) -> list[dict]:
     """Retrieve and normalize SEC filing evidence as a list."""
     return retrieve_evidence_result(query, filters, top_k)["evidence"]
@@ -67,7 +77,7 @@ def retrieve_evidence(
 def retrieve_evidence_result(
     query: str,
     filters: dict | None = None,
-    top_k: int = 10,
+    top_k: int = 15,
 ) -> RetrievalResult:
     """Normalize evidence and carry the RAG team's optional retrieval signals."""
 
@@ -82,7 +92,7 @@ def retrieve_evidence_result(
         raise ValueError("top_k must be <= 50")
 
     # Select Mock or Real Retriever
-    retrieve = _load_retriever()
+    retrieve = _load_retriever(filters)
 
     # Execute retrieval
     response = retrieve(query=query, filters=filters, top_k=top_k)

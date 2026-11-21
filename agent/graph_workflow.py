@@ -26,6 +26,7 @@ def build_graph(
     *,
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
+    answer_generator: Callable | None = None,
 ):
     """Build and compile the LangGraph workflow."""
 
@@ -36,11 +37,25 @@ def build_graph(
     # NODE 1: Query Understanding
     def query_node(state: AgentGraphState) -> dict:
         try:
-            filters = parser(state["query"])
+            parsed = parser(state["query"])
+            filters = {
+                key: parsed.get(key)
+                for key in ("ticker", "fiscal_year", "fiscal_period")
+                if parsed.get(key) is not None
+            }
+
+            tickers = parsed.get("tickers") or []
+            if len(tickers) > 1:
+                filters["ticker"] = tickers
+            elif tickers and "ticker" not in filters:
+                filters["ticker"] = tickers[0]
 
             return {
                 "filters": filters,
-                "logs": add_logs(
+                "form": parsed.get("form"),
+                "question_type": parsed.get("question_type"),
+                "query_understanding_mode": parsed.get("query_understanding_mode"),
+            "logs": add_logs(
                     state,
                     "[INFO] Query parsing started",
                     "[INFO] Query parsing completed",
@@ -199,8 +214,21 @@ def build_graph(
             return "evaluate_evidence"
         return state["status"]
 
+    # Generation always follows the final evidence decision.
+    if answer_generator is not None and graphrag_retriever is not None and evidence_evaluator is None:
+        raise ValueError("Answer generation with GraphRAG requires an evidence evaluator")
+
+    def answer_node(state: AgentGraphState) -> dict:
+        update = answer_generator(state)
+        return {**update, "logs": add_logs(state, "[INFO] Answer generation completed")}
+
     # BUILD STATEGRAPH
     graph = StateGraph(AgentGraphState)
+
+    terminal = "generate_answer" if answer_generator is not None else END
+    if answer_generator is not None:
+        graph.add_node("generate_answer", answer_node)
+        graph.add_edge("generate_answer", END)
 
     graph.add_node("query", query_node)
     graph.add_node("retrieval", retrieval_node)
@@ -208,16 +236,16 @@ def build_graph(
     graph.add_node("graphrag", graphrag_node)
     outcomes = {
         "graphrag": "graphrag",
-        "SUCCESS": END,
-        "NO_EVIDENCE": END,
-        "ERROR": END,
+        "SUCCESS": terminal,
+        "NO_EVIDENCE": terminal,
+        "ERROR": terminal,
     }
     if evidence_evaluator is None:
-        graph.add_edge("graphrag", END)
+        graph.add_edge("graphrag", terminal)
     else:
         graph.add_node("evaluate_evidence", evaluate_evidence_node)
         graph.add_edge("graphrag", "evaluate_evidence")
-        graph.add_edge("evaluate_evidence", END)
+        graph.add_edge("evaluate_evidence", terminal)
         outcomes["evaluate_evidence"] = "evaluate_evidence"
 
     graph.add_edge(START, "query")
@@ -244,13 +272,14 @@ def build_graph(
 
 def run_graph_agent(
     query: str,
-    top_k: int = 10,
+    top_k: int = 15,
     *,
     parser: Callable,
     retriever: Callable,
     router: Callable | None = None,
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
+    answer_generator: Callable | None = None,
 ) -> AgentGraphState:
     """Execute the workflow with injected module functions."""
 
@@ -260,6 +289,7 @@ def run_graph_agent(
         router=router,
         graphrag_retriever=graphrag_retriever,
         evidence_evaluator=evidence_evaluator,
+        answer_generator=answer_generator,
     )
 
     initial_state = create_graph_state(
