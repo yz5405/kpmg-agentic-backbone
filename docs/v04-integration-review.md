@@ -1,40 +1,25 @@
-# v0.4 integration review
+# Agent v0.4 verification and reproduction
 
-## Decisions and contract draft
+[PR #14](https://github.com/yz5405/kpmg-agentic-backbone/pull/14) integrates capability-aware routing, capped fallback, and SEC citation provenance. The validation below covers the integration at commit `a191833`.
 
-- Keep RAG-first available and make auto routing opt-in for the sprint. GraphRAG
-  revision `de637a8` applies ticker and form filters and translates fiscal labels
-  into reporting windows. Graph refuses unsupported filters. Structured accepts
-  some upstream keys it does not apply, such as section and is_table. The Agent
-  adapter only offers ticker, form, fiscal year and fiscal period and explicitly
-  rejects other keys. A quarter requires a fiscal year. A ticker list scopes
-  allowed companies without guaranteeing coverage for each company.
-- Put the coverage check after query understanding and before tool selection.
-  Check the requested capabilities, fiscal interval and number of companies.
-  After retrieval, verify SEC provenance and evidence sufficiency before
-  sending evidence to the answer model. A candidate count or Chroma status is
-  insufficient to establish that a calculation is answerable.
-- Keep the frozen `final_v2` retriever as the reproducible reference. Keep the
-  Agent's citation ID validation and answer policy. Defer a Terra versus Luna
-  recommendation until paired live comparisons of supported answers, truthful
-  abstention, citation correctness, latency and tokens are available.
-- Proposed Retrieval Contract §19 change for team review. Report selected and
-  accepted tool, attempted tool and outcome, sanitized failure category,
-  fallback count, latency, trace ID and provenance. Distinguish no match,
-  insufficient evidence and backend failure. Define ranking as a separate
-  capability requiring common units, complete per-company time coverage and
-  deterministic arithmetic. This draft has not been posted to GitHub.
+## Verified in v0.4
 
-## Known limitations
+| Area | Result |
+| --- | --- |
+| Automated regression | [73 tests passed](v04-regression-summary.md) |
+| Local retrieval | Frozen Chroma and DuckDB verified through FastAPI |
+| Neo4j | [Automatic routing to the real read-only graph backend verified](v04-neo4j-verification.md) |
+| Financial Explorer v2 | [Real retrieval and SEC citation rendering verified](v04-ui-acceptance.md) |
 
-EV2-040 uses the latest filing for each company in a specific snapshot.
-EV2-042 additionally requires verified net income and revenue for the same
-company and interval. EV2-043 additionally requires comparable prior-year
-revenue. The current bounded retriever does not prove completeness for these
-operations. The ranking and Microsoft–Apple comparison tests assert safe
-abstention with available candidate evidence.
+## Reproduce locally
 
-The local browser check covers live retrieval and SEC citation rendering.
-Live model output and the new Neo4j routing pass require usable, approved
-credential configuration. Historical backend tests from PR #14 are recorded
-separately from this sprint's reruns.
+1. Follow the [repository setup instructions](../README.md#local-environment). Use team-approved instances and artifacts. Load credentials from your local environment.
+2. Enable real Chroma and GraphRAG. Set `KPMG_TOOL_SELECTION=auto` to exercise question-aware routing. Keep both LLM flags off for retrieval-only verification.
+3. Run the [regression command](v04-regression-summary.md), then use the [Neo4j](v04-neo4j-verification.md) and [UI](v04-ui-acceptance.md) checks.
+4. Use the repository validation scripts with approved local inputs for additional team evaluation.
+
+## Scope and open checks
+
+RAG-first remains available. Automatic routing selects Vector for narrative retrieval, Structured for supported financial lookups, and Graph for explicit claim keyword searches. One alternate retrieval attempt is allowed. SEC source validation and evidence evaluation run before answer generation. Cross-company ranking, financial calculations that require complete coverage, and graph traversal remain unsupported.
+
+The remaining end-to-end check is a real model-generated answer with citations in Financial Explorer. The retrieval traces, rule-based extraction records, and generated HTML are kept outside this public documentation update.
