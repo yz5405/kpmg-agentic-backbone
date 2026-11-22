@@ -252,3 +252,25 @@ def test_answer_accounting_is_per_request():
     assert first["llm_calls"] == second["llm_calls"] == 1
     assert first["token_usage"] == USAGE
     assert second["token_usage"] is None
+
+
+@pytest.mark.parametrize("fallback_evidence", [EVIDENCE, []])
+def test_evaluator_rejection_attempts_fallback_once(fallback_evidence):
+    calls = []
+
+    def fallback(**request):
+        calls.append(request)
+        return fallback_evidence
+
+    result = run_graph_agent(
+        query="Microsoft revenue?",
+        parser=lambda _: {},
+        retriever=lambda **_: {"evidence": EVIDENCE, "evidence_status": "ok", "weak_reasons": []},
+        graphrag_retriever=fallback,
+        evidence_evaluator=lambda **state: state["graphrag_evidence"],
+    )
+
+    assert len(calls) == 1
+    assert result["should_try_graphrag"]
+    assert result["evidence"] == fallback_evidence
+    assert result["status"] == ("SUCCESS" if fallback_evidence else "NO_EVIDENCE")

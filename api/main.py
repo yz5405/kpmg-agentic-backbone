@@ -1,12 +1,12 @@
 import os
 import uuid
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from agent.integration import run_integrated_agent
 from agent.routing import evaluate_financial_evidence
-from agent.tools.graphrag_tool import retrieve_structured_evidence
+from agent.tools.graphrag_tool import retrieve_graph_evidence, retrieve_structured_evidence
 
 app = FastAPI(
     title="KPMG Agentic Backbone API",
@@ -29,8 +29,15 @@ def query_agent(request: QueryRequest):
     trace_id = request.trace_id or str(uuid.uuid4())
     workflow_options = {}
     if os.getenv("KPMG_GRAPHRAG_ENABLED") == "1":
+        retrievers = {
+            "graph": retrieve_graph_evidence,
+            "structured": retrieve_structured_evidence,
+        }
+        arm = os.getenv("KPMG_GRAPHRAG_ARM", "structured")
+        if arm not in retrievers:
+            raise HTTPException(status_code=503, detail="Invalid KPMG_GRAPHRAG_ARM configuration")
         workflow_options = {
-            "graphrag_retriever": retrieve_structured_evidence,
+            "graphrag_retriever": retrievers[arm],
             "evidence_evaluator": evaluate_financial_evidence,
         }
 
@@ -46,7 +53,13 @@ def query_agent(request: QueryRequest):
             metadata = item.get("metadata", {})
             source_url = metadata.get("source_url")
             if source_url:
+                provenance = {
+                    key: metadata[key]
+                    for key in ("section_id", "fact_id")
+                    if metadata.get(key) is not None
+                }
                 citations.append({
+                    **provenance,
                     "source_url": source_url,
                     "ticker": metadata.get("ticker"),
                     "form": metadata.get("form"),

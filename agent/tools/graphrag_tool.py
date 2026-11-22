@@ -1,4 +1,4 @@
-"""Adapt GraphRAG structured retrieval to Agent evidence."""
+"""Adapt GraphRAG retrieval to Agent evidence."""
 
 import re
 
@@ -11,14 +11,29 @@ def retrieve_structured_evidence(
     top_k: int = 10,
 ) -> list[dict]:
     """Call the registered GraphRAG structured backend when fallback runs."""
-    from graphrag.retrieve import structured_search
+    from graphrag.backends import structured_search
 
-    structured_filters = {
+    return _retrieve_evidence(structured_search, query, filters, top_k)
+
+
+def retrieve_graph_evidence(
+    query: str,
+    filters: dict | None = None,
+    top_k: int = 10,
+) -> list[dict]:
+    """Call the registered Neo4j full-text retrieval arm."""
+    from graphrag.backends import graph_search
+
+    return _retrieve_evidence(graph_search, query, filters, top_k)
+
+
+def _retrieve_evidence(search, query: str, filters: dict | None, top_k: int) -> list[dict]:
+    retrieval_filters = {
         key: value
         for key, value in (filters or {}).items()
         if key in {"ticker", "fiscal_year", "fiscal_period"} and value is not None
     }
-    rows = structured_search(query=query, filters=structured_filters, top_k=top_k)
+    rows = search(query=query, filters=retrieval_filters, top_k=top_k)
     evidence = [_to_evidence(row) for row in rows]
     for item in evidence:
         metadata = item["metadata"]

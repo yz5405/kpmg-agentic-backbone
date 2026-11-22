@@ -193,6 +193,12 @@ def build_graph(
             }
 
         status = determine_status(evidence=evidence, error=None)
+        if not evidence and state["evidence"] and graphrag_retriever is not None and not state["should_try_graphrag"]:
+            return {
+                "status": status,
+                "should_try_graphrag": True,
+                "logs": add_logs(state, "[INFO] Evidence evaluation requested GraphRAG fallback"),
+            }
         return {
             "evidence": evidence,
             "status": status,
@@ -205,6 +211,11 @@ def build_graph(
         if state["error"] is not None:
             return "routing"
         return "retrieval"
+
+    def after_evaluation(state: AgentGraphState) -> str:
+        if state["status"] == "NO_EVIDENCE" and state["should_try_graphrag"] and state["evidence"]:
+            return "graphrag"
+        return "finish"
 
     def select_outcome(state: AgentGraphState) -> str:
         """Run GraphRAG when the router requests it and a retriever is available."""
@@ -245,7 +256,9 @@ def build_graph(
     else:
         graph.add_node("evaluate_evidence", evaluate_evidence_node)
         graph.add_edge("graphrag", "evaluate_evidence")
-        graph.add_edge("evaluate_evidence", terminal)
+        graph.add_conditional_edges(
+            "evaluate_evidence", after_evaluation, {"graphrag": "graphrag", "finish": terminal}
+        )
         outcomes["evaluate_evidence"] = "evaluate_evidence"
 
     graph.add_edge(START, "query")
