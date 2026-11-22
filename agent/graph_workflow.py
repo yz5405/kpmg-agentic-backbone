@@ -16,12 +16,17 @@ from agent.graph_state import (
     AgentGraphState,
     create_graph_state,
 )
+from agent.routing import EvidenceEvaluator, determine_status, should_try_graphrag
 
 
 def build_graph(
     parser: Callable,
     retriever: Callable,
     router: Callable | None = None,
+    *,
+    graphrag_retriever: Callable | None = None,
+    evidence_evaluator: EvidenceEvaluator | None = None,
+    answer_generator: Callable | None = None,
 ):
     """Build and compile the LangGraph workflow."""
 
@@ -32,11 +37,25 @@ def build_graph(
     # NODE 1: Query Understanding
     def query_node(state: AgentGraphState) -> dict:
         try:
-            filters = parser(state["query"])
+            parsed = parser(state["query"])
+            filters = {
+                key: parsed.get(key)
+                for key in ("ticker", "fiscal_year", "fiscal_period")
+                if parsed.get(key) is not None
+            }
+
+            tickers = parsed.get("tickers") or []
+            if len(tickers) > 1:
+                filters["ticker"] = tickers
+            elif tickers and "ticker" not in filters:
+                filters["ticker"] = tickers[0]
 
             return {
                 "filters": filters,
-                "logs": add_logs(
+                "form": parsed.get("form"),
+                "question_type": parsed.get("question_type"),
+                "query_understanding_mode": parsed.get("query_understanding_mode"),
+            "logs": add_logs(
                     state,
                     "[INFO] Query parsing started",
                     "[INFO] Query parsing completed",
@@ -60,14 +79,23 @@ def build_graph(
             if state["top_k"] <= 0:
                 raise ValueError("top_k must be greater than zero")
 
-            evidence = retriever(
+            result = retriever(
                 query=state["query"],
                 filters=state["filters"],
                 top_k=state["top_k"],
             )
 
+            if isinstance(result, list):
+                retrieval_update = {"evidence": result}
+            else:
+                retrieval_update = {
+                    "evidence": result["evidence"],
+                    "evidence_status": result["evidence_status"],
+                    "weak_reasons": result["weak_reasons"],
+                }
+
             return {
-                "evidence": evidence,
+                **retrieval_update,
                 "logs": add_logs(
                     state,
                     "[INFO] RAG retrieval started",
@@ -106,6 +134,10 @@ def build_graph(
 
             return {
                 "status": status,
+                "should_try_graphrag": should_try_graphrag(
+                    evidence_status=state["evidence_status"],
+                    workflow_status=status,
+                ),
                 "logs": add_logs(
                     state,
                     f"[INFO] Workflow status: {status}",
@@ -122,6 +154,51 @@ def build_graph(
                 ),
             }
 
+    def graphrag_node(state: AgentGraphState) -> dict:
+        """Collect GraphRAG evidence separately for Agent evaluation."""
+        try:
+            evidence = graphrag_retriever(
+                query=state["query"],
+                filters=state["filters"],
+                top_k=state["top_k"],
+            )
+        except Exception as exc:
+            return {
+                "graphrag_error": str(exc),
+                "logs": add_logs(state, f"[WARNING] GraphRAG fallback failed: {exc}"),
+            }
+
+        return {
+            "graphrag_evidence": evidence,
+            "logs": add_logs(state, "[INFO] GraphRAG fallback completed"),
+        }
+
+    def evaluate_evidence_node(state: AgentGraphState) -> dict:
+        """Finalize the response using the Agent's evidence judgment."""
+        try:
+            evidence = evidence_evaluator(
+                query=state["query"],
+                rag_evidence=state["evidence"],
+                graphrag_evidence=state["graphrag_evidence"],
+                evidence_status=state["evidence_status"],
+                weak_reasons=state["weak_reasons"],
+            )
+            if not isinstance(evidence, list):
+                raise TypeError("Evidence evaluator must return an evidence list")
+        except Exception as exc:
+            return {
+                "status": "ERROR",
+                "error": str(exc),
+                "logs": add_logs(state, f"[ERROR] Evidence evaluation failed: {exc}"),
+            }
+
+        status = determine_status(evidence=evidence, error=None)
+        return {
+            "evidence": evidence,
+            "status": status,
+            "logs": add_logs(state, f"[INFO] Evidence evaluation status: {status}"),
+        }
+
     # CONDITIONAL EDGE
     def after_query(state: AgentGraphState) -> str:
         """Skip retrieval if query parsing has failed."""
@@ -130,15 +207,46 @@ def build_graph(
         return "retrieval"
 
     def select_outcome(state: AgentGraphState) -> str:
-        """Return the workflow's final routing outcome."""
+        """Run GraphRAG when the router requests it and a retriever is available."""
+        if state["should_try_graphrag"] and graphrag_retriever is not None:
+            return "graphrag"
+        if evidence_evaluator is not None and state["status"] != "ERROR":
+            return "evaluate_evidence"
         return state["status"]
+
+    # Generation always follows the final evidence decision.
+    if answer_generator is not None and graphrag_retriever is not None and evidence_evaluator is None:
+        raise ValueError("Answer generation with GraphRAG requires an evidence evaluator")
+
+    def answer_node(state: AgentGraphState) -> dict:
+        update = answer_generator(state)
+        return {**update, "logs": add_logs(state, "[INFO] Answer generation completed")}
 
     # BUILD STATEGRAPH
     graph = StateGraph(AgentGraphState)
 
+    terminal = "generate_answer" if answer_generator is not None else END
+    if answer_generator is not None:
+        graph.add_node("generate_answer", answer_node)
+        graph.add_edge("generate_answer", END)
+
     graph.add_node("query", query_node)
     graph.add_node("retrieval", retrieval_node)
     graph.add_node("routing", routing_node)
+    graph.add_node("graphrag", graphrag_node)
+    outcomes = {
+        "graphrag": "graphrag",
+        "SUCCESS": terminal,
+        "NO_EVIDENCE": terminal,
+        "ERROR": terminal,
+    }
+    if evidence_evaluator is None:
+        graph.add_edge("graphrag", terminal)
+    else:
+        graph.add_node("evaluate_evidence", evaluate_evidence_node)
+        graph.add_edge("graphrag", "evaluate_evidence")
+        graph.add_edge("evaluate_evidence", terminal)
+        outcomes["evaluate_evidence"] = "evaluate_evidence"
 
     graph.add_edge(START, "query")
 
@@ -156,11 +264,7 @@ def build_graph(
     graph.add_conditional_edges(
         "routing",
         select_outcome,
-        {
-            "SUCCESS": END,
-            "NO_EVIDENCE": END,
-            "ERROR": END,
-        },
+        outcomes,
     )
 
     return graph.compile()
@@ -168,11 +272,14 @@ def build_graph(
 
 def run_graph_agent(
     query: str,
-    top_k: int = 10,
+    top_k: int = 15,
     *,
     parser: Callable,
     retriever: Callable,
     router: Callable | None = None,
+    graphrag_retriever: Callable | None = None,
+    evidence_evaluator: EvidenceEvaluator | None = None,
+    answer_generator: Callable | None = None,
 ) -> AgentGraphState:
     """Execute the workflow with injected module functions."""
 
@@ -180,6 +287,9 @@ def run_graph_agent(
         parser=parser,
         retriever=retriever,
         router=router,
+        graphrag_retriever=graphrag_retriever,
+        evidence_evaluator=evidence_evaluator,
+        answer_generator=answer_generator,
     )
 
     initial_state = create_graph_state(

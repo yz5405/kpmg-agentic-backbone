@@ -74,7 +74,7 @@ def test_output_is_json_serializable():
 
 def test_company_name_case_insensitive():
     """Company names match regardless of case."""
-    assert understand_query("nvidia q4 fy2027")["ticker"] == "NVDA"
+    assert understand_query("nike q4 fy2027")["ticker"] == "NKE"
 
 
 def test_ticker_symbol_directly():

@@ -8,16 +8,23 @@ Query Understanding -> RAG Retrieval -> Conditional Routing
 No LLM API key required.
 """
 
+from typing import Callable
+
 from agent.graph_workflow import run_graph_agent
-from agent.query_parser import understand_query
-from agent.tools.rag_tool import retrieve_evidence
-from agent.routing import determine_status
+from agent.answer_node import answer_generator_from_env
+from agent.llm_query_understanding import understand_query_llm
+from agent.tools.rag_tool import retrieve_evidence_result
+from agent.routing import EvidenceEvaluator, determine_status
 from agent.logging_utils import format_log_event
 
 
 def run_integrated_agent(
     query: str,
-    top_k: int = 8,
+    top_k: int = 15,
+    *,
+    graphrag_retriever: Callable | None = None,
+    evidence_evaluator: EvidenceEvaluator | None = None,
+    answer_generator: Callable | None = None,
 ) -> dict:
     """Run the integrated Agentic Backbone workflow.
 
@@ -26,13 +33,19 @@ def run_integrated_agent(
         real: RAG Team's retrieve() with RAG_INDEX_DIR configured
     """
 
+    if answer_generator is None:
+        answer_generator = answer_generator_from_env()
+
     # Run LangGraph with actual team implementations.
     result = run_graph_agent(
         query=query,
         top_k=top_k,
-        parser=understand_query,
-        retriever=retrieve_evidence,
+        parser=understand_query_llm,
+        retriever=retrieve_evidence_result,
         router=determine_status,
+        graphrag_retriever=graphrag_retriever,
+        evidence_evaluator=evidence_evaluator,
+        answer_generator=answer_generator,
     )
 
     # Normalize logs through the team's logging utility.

@@ -24,14 +24,35 @@ Behavior
 """
 
 import os
+from typing import Literal, TypedDict
 
 
-def _load_retriever():
-    """Return RAG's ``retrieve`` function (mock by default)."""
+class RetrievalResult(TypedDict):
+    evidence: list[dict]
+    evidence_status: Literal["ok", "weak", "empty"] | None
+    weak_reasons: list[str]
+
+
+def _load_retriever(filters: dict | None = None):
+    """Select the real single- or multi-target RAG entry point when available."""
     if os.getenv("KPMG_RAG_BACKEND", "mock") == "real":
-        from rag.retrieve import retrieve
-    else:
-        from agent.tools.mock_retriever import retrieve
+        from importlib import import_module
+
+        backend = import_module("rag.retrieve")
+        split_keys = ("ticker", "form", "fiscal_year", "fiscal_period")
+        multi_target = any(
+            isinstance((filters or {}).get(key), (list, tuple, set))
+            and len((filters or {}).get(key)) > 1
+            for key in split_keys
+        )
+
+        if multi_target and hasattr(backend, "retrieve_multi"):
+            return backend.retrieve_multi
+
+        return getattr(backend, "retrieve_with_status", backend.retrieve)
+
+    from agent.tools.mock_retriever import retrieve
+
     return retrieve
 
 
@@ -47,9 +68,18 @@ def _to_evidence(chunk: dict) -> dict:
 def retrieve_evidence(
     query: str,
     filters: dict | None = None,
-    top_k: int = 8,
+    top_k: int = 15,
 ) -> list[dict]:
-    """Retrieve and normalize SEC filing evidence."""
+    """Retrieve and normalize SEC filing evidence as a list."""
+    return retrieve_evidence_result(query, filters, top_k)["evidence"]
+
+
+def retrieve_evidence_result(
+    query: str,
+    filters: dict | None = None,
+    top_k: int = 15,
+) -> RetrievalResult:
+    """Normalize evidence and carry the RAG team's optional retrieval signals."""
 
     # Validate retrieval parameters
     if isinstance(top_k, bool) or not isinstance(top_k, int):
@@ -62,14 +92,21 @@ def retrieve_evidence(
         raise ValueError("top_k must be <= 50")
 
     # Select Mock or Real Retriever
-    retrieve = _load_retriever()
+    retrieve = _load_retriever(filters)
 
     # Execute retrieval
-    chunks = retrieve(
-        query=query,
-        filters=filters,
-        top_k=top_k,
-    )
+    response = retrieve(query=query, filters=filters, top_k=top_k)
+    if isinstance(response, list):
+        return {
+            "evidence": [_to_evidence(chunk) for chunk in response],
+            "evidence_status": None,
+            "weak_reasons": [],
+        }
 
-    # Preserve text and citation metadata
-    return [_to_evidence(chunk) for chunk in chunks]
+    # The v1.1 envelope uses results. Accept the earlier prototype shape too.
+    chunks = response["results"] if "results" in response else response["chunks"]
+    return {
+        "evidence": [_to_evidence(chunk) for chunk in chunks],
+        "evidence_status": response.get("evidence_status"),
+        "weak_reasons": response.get("weak_reasons", []),
+    }
