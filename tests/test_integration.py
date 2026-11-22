@@ -43,7 +43,7 @@ def test_integrated_success():
 
 def test_integrated_no_evidence():
     result = run_integrated_agent(
-        "What was Tesla's revenue in Q3 FY2026?",
+        "What was Nike's revenue in Q3 FY2026?",
         top_k=8,
     )
 
