@@ -91,7 +91,10 @@ def evaluate_financial_evidence(
     """
     annual = _MSFT_ANNUAL_REVENUE_QUERY.fullmatch(query.strip())
     if annual is not None:
-        return _select_msft_annual_revenue(graphrag_evidence, int(annual["year"]))
+        year = int(annual["year"])
+        return _select_msft_revenue(
+            graphrag_evidence, form="10-K", start=f"{year - 1:04d}-07-01", end=f"{year:04d}-06-30",
+        )
 
     match = _SIMPLE_FINANCIAL_QUERY.fullmatch(query.strip())
     if match is None:
@@ -105,11 +108,18 @@ def evaluate_financial_evidence(
     label = _METRIC_LABELS[metric]
     amount_line = re.compile(rf"{label}\s*(?:[:=]|\bwas\b)?\s+{_AMOUNT}\s*\.?", re.IGNORECASE)
 
-    return [
+    accepted = [
         item
         for item in (*rag_evidence, *graphrag_evidence)
         if _supports_financial_metric(item, filters, metric, amount_line)
     ]
+    if accepted or metric != "revenue" or filters["ticker"] != "MSFT" or filters["fiscal_period"] != "Q3":
+        return accepted
+
+    year = filters["fiscal_year"]
+    return _select_msft_revenue(
+        graphrag_evidence, form="10-Q", start=f"{year:04d}-01-01", end=f"{year:04d}-03-31",
+    )
 
 
 def _supports_financial_metric(
@@ -130,8 +140,8 @@ def _supports_financial_metric(
     return _supports_income_statement(text, metadata, metric)
 
 
-def _select_msft_annual_revenue(evidence: list[dict], year: int) -> list[dict]:
-    """Accept cited Microsoft 10-K revenue for the July-to-June fiscal year."""
+def _select_msft_revenue(evidence: list[dict], *, form: str, start: str, end: str) -> list[dict]:
+    """Accept a cited consolidated Microsoft revenue fact for an exact reporting interval."""
     accepted = []
     for item in evidence:
         metadata = item.get("metadata")
@@ -139,10 +149,10 @@ def _select_msft_annual_revenue(evidence: list[dict], year: int) -> list[dict]:
             continue
         if (
             metadata.get("ticker") != "MSFT"
-            or metadata.get("form") != "10-K"
+            or metadata.get("form") != form
             or metadata.get("concept") != _REVENUE_CONCEPT
-            or metadata.get("period_start") != f"{year - 1:04d}-07-01"
-            or metadata.get("period_end") != f"{year:04d}-06-30"
+            or metadata.get("period_start") != start
+            or metadata.get("period_end") != end
             or metadata.get("dimensions") != []
             or not metadata.get("fact_id")
             or not _has_citation(metadata)

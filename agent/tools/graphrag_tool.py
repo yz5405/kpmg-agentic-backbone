@@ -9,31 +9,33 @@ def retrieve_structured_evidence(
     query: str,
     filters: dict | None = None,
     top_k: int = 10,
+    trace_id: str | None = None,
 ) -> list[dict]:
     """Call the registered GraphRAG structured backend when fallback runs."""
     from graphrag.backends import structured_search
 
-    return _retrieve_evidence(structured_search, query, filters, top_k)
+    return _retrieve_evidence(structured_search, query, filters, top_k, trace_id)
 
 
 def retrieve_graph_evidence(
     query: str,
     filters: dict | None = None,
     top_k: int = 10,
+    trace_id: str | None = None,
 ) -> list[dict]:
     """Call the registered Neo4j full-text retrieval arm."""
     from graphrag.backends import graph_search
 
-    return _retrieve_evidence(graph_search, query, filters, top_k)
+    return _retrieve_evidence(graph_search, query, filters, top_k, trace_id)
 
 
-def _retrieve_evidence(search, query: str, filters: dict | None, top_k: int) -> list[dict]:
-    retrieval_filters = {
-        key: value
-        for key, value in (filters or {}).items()
-        if key in {"ticker", "fiscal_year", "fiscal_period"} and value is not None
-    }
-    rows = search(query=query, filters=retrieval_filters, top_k=top_k)
+def _retrieve_evidence(search, query: str, filters: dict | None, top_k: int, trace_id: str | None) -> list[dict]:
+    from graphrag.contract import FilterNotSupportedError
+
+    retrieval_filters = {key: value for key, value in (filters or {}).items() if value is not None}
+    if retrieval_filters.keys() - {"ticker", "form", "fiscal_year", "fiscal_period"}:
+        raise FilterNotSupportedError("Agent GraphRAG supports ticker, form, fiscal_year and fiscal_period")
+    rows = search(query=query, filters=retrieval_filters, top_k=top_k, trace_id=trace_id)
     evidence = [_to_evidence(row) for row in rows]
     for item in evidence:
         metadata = item["metadata"]

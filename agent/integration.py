@@ -25,6 +25,8 @@ def run_integrated_agent(
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
     answer_generator: Callable | None = None,
+    tools: dict[str, Callable] | None = None,
+    trace_id: str | None = None,
 ) -> dict:
     """Run the integrated Agentic Backbone workflow.
 
@@ -46,6 +48,8 @@ def run_integrated_agent(
         graphrag_retriever=graphrag_retriever,
         evidence_evaluator=evidence_evaluator,
         answer_generator=answer_generator,
+        tools=tools,
+        trace_id=trace_id,
     )
 
     # Normalize logs through the team's logging utility.

@@ -16,6 +16,7 @@ from agent.graph_state import (
     AgentGraphState,
     create_graph_state,
 )
+from agent.tool_selection import describe_retrieval_error, run_tool_selection
 from agent.routing import EvidenceEvaluator, determine_status, should_try_graphrag
 
 
@@ -27,6 +28,8 @@ def build_graph(
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
     answer_generator: Callable | None = None,
+    tools: dict[str, Callable] | None = None,
+    trace_id: str | None = None,
 ):
     """Build and compile the LangGraph workflow."""
 
@@ -75,6 +78,8 @@ def build_graph(
 
     # NODE 2: RAG Retrieval
     def retrieval_node(state: AgentGraphState) -> dict:
+        if tools is not None:
+            return run_tool_selection(state, tools, trace_id)
         try:
             if state["top_k"] <= 0:
                 raise ValueError("top_k must be greater than zero")
@@ -163,9 +168,11 @@ def build_graph(
                 top_k=state["top_k"],
             )
         except Exception as exc:
+            failure = describe_retrieval_error(exc)
             return {
-                "graphrag_error": str(exc),
-                "logs": add_logs(state, f"[WARNING] GraphRAG fallback failed: {exc}"),
+                "graphrag_error": failure["reason"],
+                "retrieval_failure": failure,
+                "logs": add_logs(state, f"[WARNING] GraphRAG fallback failed: {failure['type']}"),
             }
 
         return {
@@ -192,6 +199,8 @@ def build_graph(
                 "logs": add_logs(state, f"[ERROR] Evidence evaluation failed: {exc}"),
             }
 
+        if not evidence and state.get("retrieval_failure"):
+            return {"evidence": [], "status": "ERROR", "error": state["retrieval_failure"]["reason"]}
         status = determine_status(evidence=evidence, error=None)
         if not evidence and state["evidence"] and graphrag_retriever is not None and not state["should_try_graphrag"]:
             return {
@@ -272,7 +281,7 @@ def build_graph(
         },
     )
 
-    graph.add_edge("retrieval", "routing")
+    graph.add_edge("retrieval", terminal if tools is not None else "routing")
 
     graph.add_conditional_edges(
         "routing",
@@ -293,6 +302,8 @@ def run_graph_agent(
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
     answer_generator: Callable | None = None,
+    tools: dict[str, Callable] | None = None,
+    trace_id: str | None = None,
 ) -> AgentGraphState:
     """Execute the workflow with injected module functions."""
 
@@ -303,6 +314,8 @@ def run_graph_agent(
         graphrag_retriever=graphrag_retriever,
         evidence_evaluator=evidence_evaluator,
         answer_generator=answer_generator,
+        tools=tools,
+        trace_id=trace_id,
     )
 
     initial_state = create_graph_state(
