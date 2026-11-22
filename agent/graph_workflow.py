@@ -16,6 +16,7 @@ from agent.graph_state import (
     AgentGraphState,
     create_graph_state,
 )
+from agent.tool_selection import describe_retrieval_error, run_tool_selection
 from agent.routing import EvidenceEvaluator, determine_status, should_try_graphrag
 
 
@@ -27,6 +28,9 @@ def build_graph(
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
     answer_generator: Callable | None = None,
+    tools: dict[str, Callable] | None = None,
+    trace_id: str | None = None,
+    fallback_tool: str = "graphrag",
 ):
     """Build and compile the LangGraph workflow."""
 
@@ -62,23 +66,28 @@ def build_graph(
                 ),
             }
 
-        except Exception as exc:
+        except Exception:
             return {
-                "error": str(exc),
+                "error": "Query parsing failed.",
                 "status": "ERROR",
                 "logs": add_logs(
                     state,
                     "[INFO] Query parsing started",
-                    f"[ERROR] Query parsing failed: {exc}",
+                    "[ERROR] Query parsing failed",
                 ),
             }
 
     # NODE 2: RAG Retrieval
     def retrieval_node(state: AgentGraphState) -> dict:
+        if tools is not None:
+            return run_tool_selection(state, tools, trace_id)
+        if state["top_k"] <= 0:
+            return {
+                "error": "top_k must be greater than zero",
+                "status": "ERROR",
+                "logs": add_logs(state, "[ERROR] RAG retrieval failed: invalid_request"),
+            }
         try:
-            if state["top_k"] <= 0:
-                raise ValueError("top_k must be greater than zero")
-
             result = retriever(
                 query=state["query"],
                 filters=state["filters"],
@@ -94,8 +103,14 @@ def build_graph(
                     "weak_reasons": result["weak_reasons"],
                 }
 
+            rows = retrieval_update["evidence"]
             return {
                 **retrieval_update,
+                "used_tool": "vector" if rows else None,
+                "retrieval_attempts": [{
+                    "tool": "vector", "outcome": "returned" if rows else "no_match",
+                    "returned_count": len(rows),
+                }],
                 "logs": add_logs(
                     state,
                     "[INFO] RAG retrieval started",
@@ -104,13 +119,16 @@ def build_graph(
             }
 
         except Exception as exc:
+            failure = describe_retrieval_error(exc)
             return {
-                "error": str(exc),
+                "error": failure["reason"],
+                "retrieval_failure": failure,
+                "retrieval_attempts": [{"tool": "vector", "outcome": "failed", "failure": failure}],
                 "status": "ERROR",
                 "logs": add_logs(
                     state,
                     "[INFO] RAG retrieval started",
-                    f"[ERROR] RAG retrieval failed: {exc}",
+                    f"[ERROR] RAG retrieval failed: {failure['type']}",
                 ),
             }
 
@@ -144,13 +162,13 @@ def build_graph(
                 ),
             }
 
-        except Exception as exc:
+        except Exception:
             return {
                 "status": "ERROR",
-                "error": str(exc),
+                "error": "Routing failed.",
                 "logs": add_logs(
                     state,
-                    f"[ERROR] Routing failed: {exc}",
+                    "[ERROR] Routing failed",
                 ),
             }
 
@@ -163,13 +181,22 @@ def build_graph(
                 top_k=state["top_k"],
             )
         except Exception as exc:
+            failure = describe_retrieval_error(exc)
             return {
-                "graphrag_error": str(exc),
-                "logs": add_logs(state, f"[WARNING] GraphRAG fallback failed: {exc}"),
+                "graphrag_error": failure["reason"],
+                "retrieval_failure": failure,
+                "retrieval_attempts": state["retrieval_attempts"] + [{
+                    "tool": fallback_tool, "outcome": "failed", "failure": failure,
+                }],
+                "logs": add_logs(state, f"[WARNING] GraphRAG fallback failed: {failure['type']}"),
             }
 
         return {
             "graphrag_evidence": evidence,
+            "retrieval_attempts": state["retrieval_attempts"] + [{
+                "tool": fallback_tool, "outcome": "returned" if evidence else "no_match",
+                "returned_count": len(evidence),
+            }],
             "logs": add_logs(state, "[INFO] GraphRAG fallback completed"),
         }
 
@@ -185,16 +212,31 @@ def build_graph(
             )
             if not isinstance(evidence, list):
                 raise TypeError("Evidence evaluator must return an evidence list")
-        except Exception as exc:
+        except Exception:
             return {
                 "status": "ERROR",
-                "error": str(exc),
-                "logs": add_logs(state, f"[ERROR] Evidence evaluation failed: {exc}"),
+                "error": "Evidence evaluation failed.",
+                "logs": add_logs(state, "[ERROR] Evidence evaluation failed"),
             }
 
+        if not evidence and state.get("retrieval_failure"):
+            return {
+                "evidence": [], "used_tool": None, "status": "ERROR",
+                "error": state["retrieval_failure"]["reason"],
+            }
         status = determine_status(evidence=evidence, error=None)
+        if not evidence and state["evidence"] and graphrag_retriever is not None and not state["should_try_graphrag"]:
+            return {
+                "status": status,
+                "should_try_graphrag": True,
+                "logs": add_logs(state, "[INFO] Evidence evaluation requested GraphRAG fallback"),
+            }
+        used_tool = None
+        if evidence:
+            used_tool = fallback_tool if any(item in state["graphrag_evidence"] for item in evidence) else "vector"
         return {
             "evidence": evidence,
+            "used_tool": used_tool,
             "status": status,
             "logs": add_logs(state, f"[INFO] Evidence evaluation status: {status}"),
         }
@@ -205,6 +247,11 @@ def build_graph(
         if state["error"] is not None:
             return "routing"
         return "retrieval"
+
+    def after_evaluation(state: AgentGraphState) -> str:
+        if state["status"] == "NO_EVIDENCE" and state["should_try_graphrag"] and state["evidence"]:
+            return "graphrag"
+        return "finish"
 
     def select_outcome(state: AgentGraphState) -> str:
         """Run GraphRAG when the router requests it and a retriever is available."""
@@ -245,7 +292,9 @@ def build_graph(
     else:
         graph.add_node("evaluate_evidence", evaluate_evidence_node)
         graph.add_edge("graphrag", "evaluate_evidence")
-        graph.add_edge("evaluate_evidence", terminal)
+        graph.add_conditional_edges(
+            "evaluate_evidence", after_evaluation, {"graphrag": "graphrag", "finish": terminal}
+        )
         outcomes["evaluate_evidence"] = "evaluate_evidence"
 
     graph.add_edge(START, "query")
@@ -259,7 +308,7 @@ def build_graph(
         },
     )
 
-    graph.add_edge("retrieval", "routing")
+    graph.add_edge("retrieval", terminal if tools is not None else "routing")
 
     graph.add_conditional_edges(
         "routing",
@@ -280,6 +329,9 @@ def run_graph_agent(
     graphrag_retriever: Callable | None = None,
     evidence_evaluator: EvidenceEvaluator | None = None,
     answer_generator: Callable | None = None,
+    tools: dict[str, Callable] | None = None,
+    trace_id: str | None = None,
+    fallback_tool: str = "graphrag",
 ) -> AgentGraphState:
     """Execute the workflow with injected module functions."""
 
@@ -290,6 +342,9 @@ def run_graph_agent(
         graphrag_retriever=graphrag_retriever,
         evidence_evaluator=evidence_evaluator,
         answer_generator=answer_generator,
+        tools=tools,
+        trace_id=trace_id,
+        fallback_tool=fallback_tool,
     )
 
     initial_state = create_graph_state(

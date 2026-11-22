@@ -1,6 +1,7 @@
 """Conditional routing for agent workflow results."""
 import re
 from datetime import datetime
+from itertools import takewhile
 from math import isfinite
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -50,6 +51,15 @@ _INCOME_STATEMENT_HEADER = re.compile(
     r"(?P<year>\d{4})\s+(?P<prior_year>\d{4})\s+(?P=year)\s+(?P=prior_year)\b",
     re.IGNORECASE,
 )
+_MARKDOWN_INCOME_STATEMENT_HEADER = re.compile(
+    r"(?:ITEM 1\. FINANCIAL STATEMENTS\s*\n)?INCOME STATEMENTS\s*\n"
+    r"\(In millions, except per share amounts\)(?:[ \t]+\(Unaudited\))?\s*\n"
+    r"\|[ \t]*\| Three Months Ended (?P<month_day>[A-Za-z]+ \d{1,2}), (?P<year>\d{4}) "
+    r"\| Three Months Ended (?P=month_day), (?P<prior_year>\d{4}) "
+    r"\| Nine Months Ended (?P=month_day), (?P=year) "
+    r"\| Nine Months Ended (?P=month_day), (?P=prior_year) \|",
+    re.IGNORECASE,
+)
 _INCOME_STATEMENT_ROWS = {
     "revenue": "Total revenue",
     "operating income": "Operating income",
@@ -81,7 +91,10 @@ def evaluate_financial_evidence(
     """
     annual = _MSFT_ANNUAL_REVENUE_QUERY.fullmatch(query.strip())
     if annual is not None:
-        return _select_msft_annual_revenue(graphrag_evidence, int(annual["year"]))
+        year = int(annual["year"])
+        return _select_msft_revenue(
+            graphrag_evidence, form="10-K", start=f"{year - 1:04d}-07-01", end=f"{year:04d}-06-30",
+        )
 
     match = _SIMPLE_FINANCIAL_QUERY.fullmatch(query.strip())
     if match is None:
@@ -95,11 +108,18 @@ def evaluate_financial_evidence(
     label = _METRIC_LABELS[metric]
     amount_line = re.compile(rf"{label}\s*(?:[:=]|\bwas\b)?\s+{_AMOUNT}\s*\.?", re.IGNORECASE)
 
-    return [
+    accepted = [
         item
         for item in (*rag_evidence, *graphrag_evidence)
         if _supports_financial_metric(item, filters, metric, amount_line)
     ]
+    if accepted or metric != "revenue" or filters["ticker"] != "MSFT" or filters["fiscal_period"] != "Q3":
+        return accepted
+
+    year = filters["fiscal_year"]
+    return _select_msft_revenue(
+        graphrag_evidence, form="10-Q", start=f"{year:04d}-01-01", end=f"{year:04d}-03-31",
+    )
 
 
 def _supports_financial_metric(
@@ -120,8 +140,8 @@ def _supports_financial_metric(
     return _supports_income_statement(text, metadata, metric)
 
 
-def _select_msft_annual_revenue(evidence: list[dict], year: int) -> list[dict]:
-    """Accept cited Microsoft 10-K revenue for the July-to-June fiscal year."""
+def _select_msft_revenue(evidence: list[dict], *, form: str, start: str, end: str) -> list[dict]:
+    """Accept a cited consolidated Microsoft revenue fact for an exact reporting interval."""
     accepted = []
     for item in evidence:
         metadata = item.get("metadata")
@@ -129,22 +149,18 @@ def _select_msft_annual_revenue(evidence: list[dict], year: int) -> list[dict]:
             continue
         if (
             metadata.get("ticker") != "MSFT"
-            or metadata.get("form") != "10-K"
+            or metadata.get("form") != form
             or metadata.get("concept") != _REVENUE_CONCEPT
-            or metadata.get("period_start") != f"{year - 1:04d}-07-01"
-            or metadata.get("period_end") != f"{year:04d}-06-30"
+            or metadata.get("period_start") != start
+            or metadata.get("period_end") != end
             or metadata.get("dimensions") != []
             or not metadata.get("fact_id")
             or not _has_citation(metadata)
         ):
             continue
-        # The backend may preserve the raw XBRL unit ID in unit_ref.
-        # Its generated text ends with the resolved currency.
-        unit_ref = metadata.get("unit_ref")
+        # unit_ref is a raw XBRL ID. The backend renders the resolved unit in text.
         text = item.get("text")
-        if unit_ref not in ("USD", "iso4217:USD") and not (
-            isinstance(text, str) and text.endswith(" USD")
-        ):
+        if not isinstance(text, str) or not text.endswith(" USD"):
             continue
         value = metadata.get("value_num")
         if type(value) in (int, float) and isfinite(value):
@@ -171,7 +187,8 @@ def _supports_income_statement(text: str, metadata: dict, metric: str) -> bool:
     if metadata.get("is_table") is not True or metadata.get("fiscal_period") != "Q3":
         return False
 
-    header = _INCOME_STATEMENT_HEADER.match(text.strip())
+    markdown_header = _MARKDOWN_INCOME_STATEMENT_HEADER.match(text.strip())
+    header = markdown_header or _INCOME_STATEMENT_HEADER.match(text.strip())
     if header is None or int(header["year"]) != int(header["prior_year"]) + 1:
         return False
 
@@ -186,6 +203,13 @@ def _supports_income_statement(text: str, metadata: dict, metric: str) -> bool:
 
     # The verified header puts the current quarter in the first of four columns.
     label = _INCOME_STATEMENT_ROWS[metric]
+    if markdown_header is not None:
+        cells = rf"(?:[ \t]*{_AMOUNT}[ \t]*\|){{4}}"
+        row = re.compile(rf"\|[ \t]*{label}[ \t]*\|{cells}", re.IGNORECASE)
+        lines = header.string[header.end():].lstrip("\n").splitlines()
+        table_rows = takewhile(lambda line: line.strip().startswith("|"), lines)
+        return any(row.fullmatch(line.strip()) for line in table_rows)
+
     row = rf"(?<!\w){label}(?:\s+{_AMOUNT}){{4}}(?=\s+[A-Za-z]|\s*$)"
     return re.search(row, header.string[header.end():], re.IGNORECASE) is not None
 

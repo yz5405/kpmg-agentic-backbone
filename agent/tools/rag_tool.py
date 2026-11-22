@@ -78,6 +78,7 @@ def retrieve_evidence_result(
     query: str,
     filters: dict | None = None,
     top_k: int = 15,
+    trace_id: str | None = None,
 ) -> RetrievalResult:
     """Normalize evidence and carry the RAG team's optional retrieval signals."""
 
@@ -95,7 +96,8 @@ def retrieve_evidence_result(
     retrieve = _load_retriever(filters)
 
     # Execute retrieval
-    response = retrieve(query=query, filters=filters, top_k=top_k)
+    options = {"trace_id": trace_id} if trace_id and os.getenv("KPMG_RAG_BACKEND") == "real" else {}
+    response = retrieve(query=query, filters=filters, top_k=top_k, **options)
     if isinstance(response, list):
         return {
             "evidence": [_to_evidence(chunk) for chunk in response],

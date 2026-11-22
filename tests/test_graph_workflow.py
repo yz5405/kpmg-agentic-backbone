@@ -172,7 +172,7 @@ def test_graph_parser_error_skips_retrieval():
     )
 
     assert result["status"] == "ERROR"
-    assert result["error"] == "Invalid query"
+    assert result["error"] == "Query parsing failed."
 
     assert not any(
         "RAG retrieval started" in log
@@ -193,7 +193,8 @@ def test_graph_retriever_error():
     )
 
     assert result["status"] == "ERROR"
-    assert result["error"] == "Retriever unavailable"
+    assert result["error"] == "The retrieval backend failed."
+    assert "Retriever unavailable" not in repr(result)
 
 
 def test_graph_state_isolation():

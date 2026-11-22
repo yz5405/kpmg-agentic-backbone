@@ -174,7 +174,7 @@ def test_graph_parser_failure_skips_generation():
     result = run_graph_agent(query="x", parser=fail, retriever=lambda **_: EVIDENCE,
                              answer_generator=generator(client))
     assert result["status"] == "ERROR"
-    assert result["error"] == "bad query"
+    assert result["error"] == "Query parsing failed."
     assert result["llm_calls"] == 0
 
 
@@ -195,7 +195,7 @@ def test_environment_opt_in(monkeypatch):
     monkeypatch.setenv("KPMG_ANSWER_MODEL", "explicit-model")
     assert answer_generator_from_env().model == "explicit-model"
     monkeypatch.delenv("KPMG_ANSWER_MODEL")
-    with pytest.raises(ValueError, match="explicitly configured"):
+    with pytest.raises(ValueError, match="Answer generation is not configured"):
         answer_generator_from_env()
 
 
@@ -252,3 +252,59 @@ def test_answer_accounting_is_per_request():
     assert first["llm_calls"] == second["llm_calls"] == 1
     assert first["token_usage"] == USAGE
     assert second["token_usage"] is None
+
+
+@pytest.mark.parametrize("fallback_evidence", [EVIDENCE, []])
+def test_evaluator_rejection_attempts_fallback_once(fallback_evidence):
+    calls = []
+
+    def fallback(**request):
+        calls.append(request)
+        return fallback_evidence
+
+    result = run_graph_agent(
+        query="Microsoft revenue?",
+        parser=lambda _: {},
+        retriever=lambda **_: {"evidence": EVIDENCE, "evidence_status": "ok", "weak_reasons": []},
+        graphrag_retriever=fallback,
+        evidence_evaluator=lambda **state: state["graphrag_evidence"],
+    )
+
+    assert len(calls) == 1
+    assert result["should_try_graphrag"]
+    assert result["evidence"] == fallback_evidence
+    assert result["status"] == ("SUCCESS" if fallback_evidence else "NO_EVIDENCE")
+
+
+def test_financial_evaluator_reads_frozen_markdown_income_statement():
+    from agent.routing import evaluate_financial_evidence
+
+    evidence = {
+        "text": (
+            "ITEM 1. FINANCIAL STATEMENTS\n"
+            "INCOME STATEMENTS\n"
+            "(In millions, except per share amounts) (Unaudited)\n"
+            "|  | Three Months Ended March 31, 2026 | Three Months Ended March 31, 2025 | "
+            "Nine Months Ended March 31, 2026 | Nine Months Ended March 31, 2025 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Total revenue | 82,886 | 70,066 | 241,832 | 205,283 |"
+        ),
+        "metadata": {
+            "source_url": "https://www.sec.gov/Archives/example",
+            "ticker": "MSFT",
+            "fiscal_year": 2026,
+            "fiscal_period": "Q3",
+            "reporting_period_end": "2026-03-31",
+            "is_table": True,
+        },
+    }
+    args = {
+        "query": "What was Microsoft's total revenue for the three months ended March 31, 2026?",
+        "graphrag_evidence": [],
+        "evidence_status": "ok",
+        "weak_reasons": [],
+    }
+
+    assert evaluate_financial_evidence(rag_evidence=[evidence], **args) == [evidence]
+    wrong_date = {**evidence, "text": evidence["text"].replace("March 31", "March 30")}
+    assert evaluate_financial_evidence(rag_evidence=[wrong_date], **args) == []
