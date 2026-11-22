@@ -118,16 +118,23 @@ class AnswerGenerator:
         raise AssertionError("unreachable")
 
 
+class AnswerConfigurationError(ValueError):
+    """The answer provider is enabled without a usable local configuration."""
+
+
 def answer_generator_from_env():
     """Explicit opt-in; missing configuration fails before any provider request."""
     if os.getenv("KPMG_ANSWER_ENABLED") != "1":
         return None
-    return AnswerGenerator(
-        ChatCompletionClient(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-            timeout=float(os.getenv("KPMG_ANSWER_TIMEOUT", "60")),
-        ),
-        model=os.getenv("KPMG_ANSWER_MODEL", ""),
-        max_attempts=int(os.getenv("KPMG_ANSWER_MAX_ATTEMPTS", "2")),
-    )
+    try:
+        return AnswerGenerator(
+            ChatCompletionClient(
+                api_key=os.getenv("OPENAI_API_KEY", ""),
+                base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+                timeout=float(os.getenv("KPMG_ANSWER_TIMEOUT", "60")),
+            ),
+            model=os.getenv("KPMG_ANSWER_MODEL", ""),
+            max_attempts=int(os.getenv("KPMG_ANSWER_MAX_ATTEMPTS", "2")),
+        )
+    except ValueError:
+        raise AnswerConfigurationError("Answer generation is not configured.") from None

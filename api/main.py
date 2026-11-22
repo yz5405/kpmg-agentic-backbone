@@ -1,5 +1,6 @@
 import os
 import uuid
+from functools import partial
 from pathlib import Path
 from time import perf_counter
 
@@ -7,6 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from agent.answer_node import AnswerConfigurationError
 from agent.integration import run_integrated_agent
 from agent.tools.rag_tool import retrieve_evidence_result
 from agent.routing import evaluate_financial_evidence
@@ -40,7 +42,7 @@ def financial_explorer():
 def query_agent(request: QueryRequest):
     start = perf_counter()
     trace_id = request.trace_id or str(uuid.uuid4())
-    workflow_options = {}
+    workflow_options = {"trace_id": trace_id}
     if os.getenv("KPMG_GRAPHRAG_ENABLED") == "1" and os.getenv("KPMG_TOOL_SELECTION") == "auto":
         workflow_options = {
             "tools": {"vector": retrieve_evidence_result, "structured": retrieve_structured_evidence,
@@ -56,15 +58,20 @@ def query_agent(request: QueryRequest):
         if arm not in retrievers:
             raise HTTPException(status_code=503, detail="Invalid KPMG_GRAPHRAG_ARM configuration")
         workflow_options = {
-            "graphrag_retriever": retrievers[arm],
+            "graphrag_retriever": partial(retrievers[arm], trace_id=trace_id),
             "evidence_evaluator": evaluate_financial_evidence,
+            "trace_id": trace_id,
+            "fallback_tool": arm,
         }
 
-    result = run_integrated_agent(
-        query=request.query,
-        top_k=request.top_k,
-        **workflow_options,
-    )
+    try:
+        result = run_integrated_agent(
+            query=request.query,
+            top_k=request.top_k,
+            **workflow_options,
+        )
+    except AnswerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from None
 
     citations = result.get("citations") or []
     if not citations and result.get("status") == "SUCCESS" and not result.get("answer"):
@@ -101,7 +108,8 @@ def query_agent(request: QueryRequest):
     "evidence_status": result.get("evidence_status"),
     "weak_reasons": result.get("weak_reasons", []),
     "fallback_triggered": result.get("should_try_graphrag", False),
-    "fallback_used": bool(result.get("graphrag_evidence")) or (result.get("used_tool") is not None and len(result.get("retrieval_attempts", [])) > 1),
+    "fallback_used": bool(len(result.get("retrieval_attempts", [])) > 1
+                              and result.get("used_tool") == result["retrieval_attempts"][-1]["tool"]),
         "filters": result.get("filters", {}),
         "form": result.get("form"),
         "answer": result.get("answer"),

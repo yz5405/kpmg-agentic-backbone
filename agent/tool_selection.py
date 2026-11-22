@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from agent.routing import evaluate_financial_evidence
 
 _RANKING = re.compile(r"\b(rank|highest|lowest|fastest|net margin|growth rate)\b", re.I)
+_ARITHMETIC = re.compile(r"\b(calculate|compute|add up|sum of|percentage change)\b", re.I)
 _NUMERIC = re.compile(r"\b(revenue|income|margin|cash flow|earnings|percent|ratio)\b", re.I)
 _GRAPH_CLAIMS = re.compile(r"\b(claims?|disclosures?)\b.*\b(about|mentioning|on)\b", re.I)
 _TRAVERSAL = re.compile(r"\b(shared|both|connect|relationship|related|path|traverse|across|compare)\b", re.I)
@@ -14,9 +15,11 @@ _TRAVERSAL = re.compile(r"\b(shared|both|connect|relationship|related|path|trave
 
 def select_tool(query, question_type, filters):
     """Return the primary tool and the evidence requirements for the question."""
-    if _RANKING.search(query) or (
+    if _RANKING.search(query) or _ARITHMETIC.search(query) or (
         _NUMERIC.search(query) and (
-            question_type == "comparison" or re.search(r"\b(compare|versus|vs\.?|difference between)\b", query, re.I)
+            question_type == "comparison"
+            or re.search(r"\b(compare|versus|vs\.?|difference between|combined)\b", query, re.I)
+            or re.search(r"\b(?:which company|who)\b.*\b(?:more|less|higher|lower|greater)\b", query, re.I)
         )
     ):
         return "vector", "unsupported_calculation"
@@ -69,7 +72,7 @@ def _has_sec_provenance(evidence):
     )
 
 
-def _matches_filters(item, filters):
+def _matches_filters(item, filters, tool):
     metadata = item["metadata"]
     for key in ("ticker", "form", "fiscal_year", "fiscal_period"):
         expected = filters.get(key)
@@ -78,7 +81,7 @@ def _matches_filters(item, filters):
             continue
         # GraphRAG enforces fiscal filters against filing dates without echoing
         # fiscal labels. Skip this redundant check only for absent fiscal labels.
-        if actual is None and key.startswith("fiscal_"):
+        if actual is None and key.startswith("fiscal_") and tool in {"graph", "structured"}:
             continue
         if actual not in (expected if isinstance(expected, list) else [expected]):
             return False
@@ -103,7 +106,7 @@ def run_tool_selection(state, tools, trace_id):
             result = tools[tool](query=state["query"], filters=filters, top_k=state["top_k"], trace_id=trace_id)
             rows = result["evidence"] if isinstance(result, dict) else result
             signal = result.get("evidence_status") if isinstance(result, dict) else None
-            matched = [row for row in rows if _has_sec_provenance(row) and _matches_filters(row, filters)]
+            matched = [row for row in rows if _has_sec_provenance(row) and _matches_filters(row, filters, tool)]
             if intent == "financial":
                 accepted = evaluate_financial_evidence(
                     query=state["query"], rag_evidence=matched if tool == "vector" else [],

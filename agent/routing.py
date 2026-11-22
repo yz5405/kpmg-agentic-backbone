@@ -158,13 +158,9 @@ def _select_msft_revenue(evidence: list[dict], *, form: str, start: str, end: st
             or not _has_citation(metadata)
         ):
             continue
-        # The backend may preserve the raw XBRL unit ID in unit_ref.
-        # Its generated text ends with the resolved currency.
-        unit_ref = metadata.get("unit_ref")
+        # unit_ref is a raw XBRL ID. The backend renders the resolved unit in text.
         text = item.get("text")
-        if unit_ref not in ("USD", "iso4217:USD") and not (
-            isinstance(text, str) and text.endswith(" USD")
-        ):
+        if not isinstance(text, str) or not text.endswith(" USD"):
             continue
         value = metadata.get("value_num")
         if type(value) in (int, float) and isfinite(value):

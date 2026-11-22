@@ -8,6 +8,7 @@ Query Understanding -> RAG Retrieval -> Conditional Routing
 No LLM API key required.
 """
 
+from functools import partial
 from typing import Callable
 
 from agent.graph_workflow import run_graph_agent
@@ -27,6 +28,7 @@ def run_integrated_agent(
     answer_generator: Callable | None = None,
     tools: dict[str, Callable] | None = None,
     trace_id: str | None = None,
+    fallback_tool: str = "graphrag",
 ) -> dict:
     """Run the integrated Agentic Backbone workflow.
 
@@ -43,13 +45,14 @@ def run_integrated_agent(
         query=query,
         top_k=top_k,
         parser=understand_query_llm,
-        retriever=retrieve_evidence_result,
+        retriever=partial(retrieve_evidence_result, trace_id=trace_id) if trace_id else retrieve_evidence_result,
         router=determine_status,
         graphrag_retriever=graphrag_retriever,
         evidence_evaluator=evidence_evaluator,
         answer_generator=answer_generator,
         tools=tools,
         trace_id=trace_id,
+        fallback_tool=fallback_tool,
     )
 
     # Normalize logs through the team's logging utility.

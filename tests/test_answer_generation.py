@@ -174,7 +174,7 @@ def test_graph_parser_failure_skips_generation():
     result = run_graph_agent(query="x", parser=fail, retriever=lambda **_: EVIDENCE,
                              answer_generator=generator(client))
     assert result["status"] == "ERROR"
-    assert result["error"] == "bad query"
+    assert result["error"] == "Query parsing failed."
     assert result["llm_calls"] == 0
 
 
@@ -195,7 +195,7 @@ def test_environment_opt_in(monkeypatch):
     monkeypatch.setenv("KPMG_ANSWER_MODEL", "explicit-model")
     assert answer_generator_from_env().model == "explicit-model"
     monkeypatch.delenv("KPMG_ANSWER_MODEL")
-    with pytest.raises(ValueError, match="explicitly configured"):
+    with pytest.raises(ValueError, match="Answer generation is not configured"):
         answer_generator_from_env()
 
 
