@@ -1,6 +1,7 @@
 """Conditional routing for agent workflow results."""
 import re
 from datetime import datetime
+from itertools import takewhile
 from math import isfinite
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -48,6 +49,15 @@ _INCOME_STATEMENT_HEADER = re.compile(
     r"(?:\(Unaudited\)\s+)?Three Months Ended\s+(?P<month_day>[A-Za-z]+\s+\d{1,2}),\s+"
     r"Nine Months Ended\s+(?P=month_day),\s+"
     r"(?P<year>\d{4})\s+(?P<prior_year>\d{4})\s+(?P=year)\s+(?P=prior_year)\b",
+    re.IGNORECASE,
+)
+_MARKDOWN_INCOME_STATEMENT_HEADER = re.compile(
+    r"(?:ITEM 1\. FINANCIAL STATEMENTS\s*\n)?INCOME STATEMENTS\s*\n"
+    r"\(In millions, except per share amounts\)(?:[ \t]+\(Unaudited\))?\s*\n"
+    r"\|[ \t]*\| Three Months Ended (?P<month_day>[A-Za-z]+ \d{1,2}), (?P<year>\d{4}) "
+    r"\| Three Months Ended (?P=month_day), (?P<prior_year>\d{4}) "
+    r"\| Nine Months Ended (?P=month_day), (?P=year) "
+    r"\| Nine Months Ended (?P=month_day), (?P=prior_year) \|",
     re.IGNORECASE,
 )
 _INCOME_STATEMENT_ROWS = {
@@ -171,7 +181,8 @@ def _supports_income_statement(text: str, metadata: dict, metric: str) -> bool:
     if metadata.get("is_table") is not True or metadata.get("fiscal_period") != "Q3":
         return False
 
-    header = _INCOME_STATEMENT_HEADER.match(text.strip())
+    markdown_header = _MARKDOWN_INCOME_STATEMENT_HEADER.match(text.strip())
+    header = markdown_header or _INCOME_STATEMENT_HEADER.match(text.strip())
     if header is None or int(header["year"]) != int(header["prior_year"]) + 1:
         return False
 
@@ -186,6 +197,13 @@ def _supports_income_statement(text: str, metadata: dict, metric: str) -> bool:
 
     # The verified header puts the current quarter in the first of four columns.
     label = _INCOME_STATEMENT_ROWS[metric]
+    if markdown_header is not None:
+        cells = rf"(?:[ \t]*{_AMOUNT}[ \t]*\|){{4}}"
+        row = re.compile(rf"\|[ \t]*{label}[ \t]*\|{cells}", re.IGNORECASE)
+        lines = header.string[header.end():].lstrip("\n").splitlines()
+        table_rows = takewhile(lambda line: line.strip().startswith("|"), lines)
+        return any(row.fullmatch(line.strip()) for line in table_rows)
+
     row = rf"(?<!\w){label}(?:\s+{_AMOUNT}){{4}}(?=\s+[A-Za-z]|\s*$)"
     return re.search(row, header.string[header.end():], re.IGNORECASE) is not None
 

@@ -274,3 +274,37 @@ def test_evaluator_rejection_attempts_fallback_once(fallback_evidence):
     assert result["should_try_graphrag"]
     assert result["evidence"] == fallback_evidence
     assert result["status"] == ("SUCCESS" if fallback_evidence else "NO_EVIDENCE")
+
+
+def test_financial_evaluator_reads_frozen_markdown_income_statement():
+    from agent.routing import evaluate_financial_evidence
+
+    evidence = {
+        "text": (
+            "ITEM 1. FINANCIAL STATEMENTS\n"
+            "INCOME STATEMENTS\n"
+            "(In millions, except per share amounts) (Unaudited)\n"
+            "|  | Three Months Ended March 31, 2026 | Three Months Ended March 31, 2025 | "
+            "Nine Months Ended March 31, 2026 | Nine Months Ended March 31, 2025 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| Total revenue | 82,886 | 70,066 | 241,832 | 205,283 |"
+        ),
+        "metadata": {
+            "source_url": "https://www.sec.gov/Archives/example",
+            "ticker": "MSFT",
+            "fiscal_year": 2026,
+            "fiscal_period": "Q3",
+            "reporting_period_end": "2026-03-31",
+            "is_table": True,
+        },
+    }
+    args = {
+        "query": "What was Microsoft's total revenue for the three months ended March 31, 2026?",
+        "graphrag_evidence": [],
+        "evidence_status": "ok",
+        "weak_reasons": [],
+    }
+
+    assert evaluate_financial_evidence(rag_evidence=[evidence], **args) == [evidence]
+    wrong_date = {**evidence, "text": evidence["text"].replace("March 31", "March 30")}
+    assert evaluate_financial_evidence(rag_evidence=[wrong_date], **args) == []
