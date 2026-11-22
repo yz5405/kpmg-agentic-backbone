@@ -6,4 +6,4 @@ LLM answer generation was disabled. Live model output in the browser is pending 
 
 ## Reproduce
 
-Use the [Financial Explorer build and API setup](../README.md#local-environment), open `/explorer` from the local Agent service, and submit a supported FY2026 Q3 revenue lookup followed by a cross-company comparison. Verify the SEC link on the successful lookup and the visible abstention on the unsupported comparison.
+Use the [Financial Explorer build and API setup](v04-agent-setup.md#local-environment), open `/explorer` from the local Agent service, and submit a supported FY2026 Q3 revenue lookup followed by a cross-company comparison. Verify the SEC link on the successful lookup and the visible abstention on the unsupported comparison.

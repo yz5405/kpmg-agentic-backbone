@@ -6,4 +6,4 @@ A separate test with Neo4j intentionally unconfigured recorded `backend_unavaila
 
 ## Reproduce
 
-Load the team-approved Neo4j configuration using the [local environment setup](../README.md#local-environment), enable automatic routing, and leave generated Cypher disabled. Submit “Find Microsoft claims about competition” to `/query` with `top_k=3`. Check that `selected_tool` and `used_tool` are both `graph`, each citation has SEC section provenance, and `fallback_attempts` is zero.
+Load the team-approved Neo4j configuration using the [local environment setup](v04-agent-setup.md#local-environment), enable automatic routing, and leave generated Cypher disabled. Submit “Find Microsoft claims about competition” to `/query` with `top_k=3`. Check that `selected_tool` and `used_tool` are both `graph`, each citation has SEC section provenance, and `fallback_attempts` is zero.

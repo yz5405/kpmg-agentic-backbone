@@ -13,7 +13,7 @@
 
 ## Reproduce locally
 
-1. Follow the [repository setup instructions](../README.md#local-environment). Use team-approved instances and artifacts. Load credentials from your local environment.
+1. Follow the [repository setup instructions](v04-agent-setup.md#local-environment). Use team-approved instances and artifacts. Load credentials from your local environment.
 2. Enable real Chroma and GraphRAG. Set `KPMG_TOOL_SELECTION=auto` to exercise question-aware routing. Keep both LLM flags off for retrieval-only verification.
 3. Run the [regression command](v04-regression-summary.md), then use the [Neo4j](v04-neo4j-verification.md) and [UI](v04-ui-acceptance.md) checks.
 4. Use the repository validation scripts with approved local inputs for additional team evaluation.

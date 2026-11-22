@@ -12,7 +12,7 @@ coverage check and a suitable execution tool.
 
 ### Local environment
 
-1. Install `requirements.txt` and `requirements-answer.txt` in a virtual environment.
+1. Install `requirements-answer.txt` in a virtual environment. It includes `requirements-agent.txt`.
    Install the RAG team's requirements plus `neo4j`, `duckdb`, and `pandas` in that environment.
 2. Add the RAG `final_v2` checkout and GraphRAG checkout to `PYTHONPATH`.
 3. Set `KPMG_RAG_BACKEND=real`, `RAG_BACKEND=chroma`, and
@@ -44,4 +44,4 @@ credentials outside Git.
 | Eval extraction | `PYTHONPATH=. python scripts/run_extraction.py INPUT.jsonl OUTPUT_DIR --mode rules` | 427 separate records for the supplied Eval dataset. Use `--mode llm` only for an approved live run |
 | Local retrieval traces | `python scripts/run_local_traces.py OUTPUT.jsonl` | 20 sanitized records comparing two top-k values over the same ten questions |
 
-See [the integration review](docs/v04-integration-review.md) for acceptance boundaries.
+See [the integration review](v04-integration-review.md) for acceptance boundaries.
