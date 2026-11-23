@@ -94,6 +94,7 @@ def build_graph(
                 "status": "ERROR",
                 "logs": add_logs(state, "[ERROR] RAG retrieval failed: invalid_request"),
             }
+        started = perf_counter()
         try:
             result = retriever(
                 query=state["query"],
@@ -117,6 +118,7 @@ def build_graph(
                 "retrieval_attempts": [{
                     "tool": "vector", "outcome": "returned" if rows else "no_match",
                     "returned_count": len(rows),
+                    "latency_ms": round((perf_counter() - started) * 1000, 2),
                 }],
                 "logs": add_logs(
                     state,
@@ -181,6 +183,7 @@ def build_graph(
 
     def graphrag_node(state: AgentGraphState) -> dict:
         """Collect GraphRAG evidence separately for Agent evaluation."""
+        started = perf_counter()
         try:
             evidence = graphrag_retriever(
                 query=state["query"],
@@ -203,6 +206,7 @@ def build_graph(
             "retrieval_attempts": state["retrieval_attempts"] + [{
                 "tool": fallback_tool, "outcome": "returned" if evidence else "no_match",
                 "returned_count": len(evidence),
+                "latency_ms": round((perf_counter() - started) * 1000, 2),
             }],
             "logs": add_logs(state, "[INFO] GraphRAG fallback completed"),
         }
@@ -241,9 +245,15 @@ def build_graph(
         used_tool = None
         if evidence:
             used_tool = fallback_tool if any(item in state["graphrag_evidence"] for item in evidence) else "vector"
+        attempts = state.get("retrieval_attempts", [])
+        sources = {"vector": state["evidence"], fallback_tool: state["graphrag_evidence"]}
         return {
             "evidence": evidence,
             "used_tool": used_tool,
+            "retrieval_attempts": [
+                {**attempt, "accepted_count": sum(item in sources[attempt["tool"]] for item in evidence)}
+                for attempt in attempts
+            ],
             "status": status,
             "logs": add_logs(state, f"[INFO] Evidence evaluation status: {status}"),
         }

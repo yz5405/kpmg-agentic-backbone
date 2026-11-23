@@ -29,3 +29,15 @@ PYTHONPATH=".:$PYTHONPATH" python scripts/run_joint_e2e.py CHECKLIST.md OUTPUT_D
 ```
 
 Case 4 must remain blocked without a validated calculator even with live answer generation enabled. Use a separate output directory per run.
+
+## Real GraphRAG joint verification
+
+Use the formal GraphRAG checkout on `PYTHONPATH` and load its team-approved Neo4j settings and read-only DuckDB file into your local environment. Keep generated Cypher disabled. The script calls real Chroma, Neo4j and DuckDB, disables model calls and writes local artifacts.
+
+```sh
+PYTHONPATH=".:$PYTHONPATH" python scripts/run_joint_graphrag.py OUTPUT_DIR
+```
+
+When GraphRAG is enabled, the API defaults to auto unless an existing legacy arm is explicitly configured. With coverage pre-check enabled, explicit Graph claims and scoped Structured lookups can reach their own backend. The RAG filing plan constrains Vector retrieval. Comparison and YoY cases continue through the established validation-only path. A named company with a supported GraphRAG query can be checked against the corresponding live backend, but this does not imply expanded coverage.
+
+The current audited fixtures agree on the same 20 filings. Expanded coverage needs a versioned backend-specific manifest and corresponding live stores before this integration advertises it. Graph's lexical retrieval does not implement traversal or Exhibit 21 counts. A quarter without a year requests clarification. The Graph arm retries a retrieval-unavailable condition once; invalid and unsupported filters are not retried.

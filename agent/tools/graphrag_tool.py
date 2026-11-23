@@ -33,8 +33,8 @@ def _retrieve_evidence(search, query: str, filters: dict | None, top_k: int, tra
     from graphrag.contract import FilterNotSupportedError
 
     retrieval_filters = {key: value for key, value in (filters or {}).items() if value is not None}
-    if retrieval_filters.keys() - {"ticker", "form", "fiscal_year", "fiscal_period"}:
-        raise FilterNotSupportedError("Agent GraphRAG supports ticker, form, fiscal_year and fiscal_period")
+    if retrieval_filters.keys() - {"ticker", "form", "fiscal_year", "fiscal_period", "reporting_period_end"}:
+        raise FilterNotSupportedError("Agent GraphRAG does not support this filter")
     rows = search(query=query, filters=retrieval_filters, top_k=top_k, trace_id=trace_id)
     evidence = [_to_evidence(row) for row in rows]
     for item in evidence:

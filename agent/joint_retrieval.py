@@ -4,7 +4,7 @@ import re
 from time import perf_counter
 
 from agent.joint_evidence import financial_inputs, is_quarter_cloud_drivers, quarter_cloud_evidence
-from agent.tool_selection import _has_sec_provenance, describe_retrieval_error, select_tool
+from agent.tool_selection import _has_sec_provenance, describe_retrieval_error, is_subsidiary_lookup, needs_fiscal_year, run_tool_selection, select_tool
 from agent.tools.rag_tool import _to_evidence
 
 _POSSESSIVE = re.compile(r"\b([A-Z][\w-]+)[’']s\b")
@@ -56,7 +56,24 @@ def coverage_plan(state):
     }, subqueries
 
 
-def run_joint_retrieval(state, trace_id, graph_enabled):
+def _graph_filters(state, precheck):
+    periods = precheck["periods"]
+    tickers = list(dict.fromkeys(e["ticker"] for e in precheck["entities"] if e.get("ticker")))
+    if not tickers:
+        parsed = state["filters"].get("ticker")
+        tickers = [parsed] if isinstance(parsed, str) else (parsed or [])
+    filters = {"ticker": tickers[0] if len(tickers) == 1 else tickers} if tickers else {}
+    for source, destination in (
+        ("fiscal_years", "fiscal_year"), ("fiscal_periods", "fiscal_period"),
+        ("forms", "form"), ("period_ends", "reporting_period_end"),
+    ):
+        values = periods.get(source) or []
+        if len(values) == 1:
+            filters[destination] = values[0]
+    return filters
+
+
+def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
     started = perf_counter()
     result = {
         "status": "NO_EVIDENCE", "evidence": [], "retrieval_attempts": [],
@@ -64,11 +81,35 @@ def run_joint_retrieval(state, trace_id, graph_enabled):
                         "returned_count": 0, "accepted_count": 0, "candidate_citations": []},
     }
     trace = result["joint_trace"]
+    primary_attempt = None
     try:
         precheck, subqueries = coverage_plan(state)
         trace["precheck"] = precheck
         trace["latency_ms"]["precheck"] = round((perf_counter() - started) * 1000, 2)
         result["filters"] = precheck["filters"]
+        graph_filters = _graph_filters(state, precheck)
+        graph_state = {**state, "filters": graph_filters, "form": None, "logs": state.get("logs", [])}
+        primary, intent = select_tool(
+            state["query"], None if state["question_type"] == "relationship" else state["question_type"], graph_filters,
+        )
+        if needs_fiscal_year(graph_filters):
+            return {**result, "selected_tool": "clarification",
+                    "answer": "Which fiscal year should I use for that quarter?"}
+        if intent == "unsupported_relationship":
+            return {**result, "retrieval_limitation": "Graph Search supports claim lookup, not relationship traversal."}
+        if (tools and primary in {"graph", "structured"} and primary in tools and graph_filters.get("ticker")
+                and not _EXHIBIT.search(state["query"]) and not _YOY.search(state["query"])
+                and not is_quarter_cloud_drivers(state["query"])):
+            primary_attempt = run_tool_selection(
+                graph_state, {primary: tools[primary]}, trace_id, route=(primary, intent),
+            )
+            attempt = primary_attempt["retrieval_attempts"][0]
+            trace["backend_attempts"] = primary_attempt["retrieval_attempts"]
+            trace["returned_count"] = attempt.get("returned_count", 0)
+            trace["accepted_count"] = attempt.get("accepted_count", 0)
+            if (primary_attempt["status"] == "SUCCESS" or not subqueries or is_subsidiary_lookup(state["query"])
+                    or attempt.get("failure", {}).get("type") in {"invalid_request", "unsupported_filter"}):
+                return {**result, **primary_attempt}
         if precheck["status"] in {"none", "unresolved"}:
             return {**result, "answer": precheck["message"], "selected_tool": "direct_reply"}
         if precheck["status"] == "no_target":
@@ -130,14 +171,35 @@ def run_joint_retrieval(state, trace_id, graph_enabled):
             accepted = quarter_cloud_evidence(accepted, periods)
         trace["calculation_status"] = result.get("calculation_status", "not_required")
         trace["calculation_reason"] = result.get("calculation_reason")
+        if (tools and not primary_attempt and "graph" in tools and intent == "narrative"
+                and graph_filters.get("ticker")
+                and re.search(r"\b(?:competiti\w*|disclosure\w*|risk\w*)\b", state["query"], re.I)
+                and not is_quarter_cloud_drivers(state["query"])
+                and (not accepted or envelope["evidence_status"] in {"weak", "empty"})):
+            alternate = run_tool_selection(graph_state, {"graph": tools["graph"]}, trace_id, route=("graph", "narrative"))
+            vector_attempt = {"tool": "vector", "outcome": "insufficient_evidence",
+                              "returned_count": len(rows), "accepted_count": 0,
+                              "evidence_status": envelope["evidence_status"],
+                              "latency_ms": trace["latency_ms"]["retrieval"]}
+            alternate["retrieval_attempts"].insert(0, vector_attempt)
+            trace["backend_attempts"] = alternate["retrieval_attempts"]
+            trace["accepted_count"] = len(alternate["evidence"])
+            return {**result, **alternate, "selected_tool": "vector", "should_try_graphrag": True,
+                    "weak_reasons": envelope["weak_reasons"]}
         trace["accepted_count"] = len(accepted)
         trace["latency_ms"]["evidence_validation"] = round((perf_counter() - started) * 1000, 2)
         return {
-            **result, "evidence": accepted, "evidence_status": envelope["evidence_status"],
+            **result, "selected_tool": primary_attempt["selected_tool"] if primary_attempt else "vector",
+            "retrieval_failure": primary_attempt.get("retrieval_failure") if primary_attempt else None,
+            "should_try_graphrag": bool(primary_attempt), "evidence": accepted, "evidence_status": envelope["evidence_status"],
             "weak_reasons": envelope["weak_reasons"], "used_tool": "vector",
-            "status": "SUCCESS" if accepted else "NO_EVIDENCE",
-            "retrieval_attempts": [{"tool": "vector", "outcome": "accepted" if accepted else "insufficient_evidence",
-                                    "returned_count": len(rows), "accepted_count": len(accepted)}],
+            "status": "SUCCESS" if accepted else "ERROR" if primary_attempt and primary_attempt["status"] == "ERROR" else "NO_EVIDENCE",
+            "error": primary_attempt.get("error") if primary_attempt and not accepted else None,
+            "retrieval_attempts": (primary_attempt["retrieval_attempts"] if primary_attempt else []) + [{
+                "tool": "vector", "outcome": "accepted" if accepted else "insufficient_evidence",
+                "returned_count": len(rows), "accepted_count": len(accepted),
+                "latency_ms": trace["latency_ms"]["retrieval"], "evidence_status": envelope["evidence_status"],
+            }],
         }
     except Exception as exc:
         failure = describe_retrieval_error(exc)

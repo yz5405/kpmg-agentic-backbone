@@ -65,7 +65,8 @@ def test_backend_failure_does_not_masquerade_as_no_match():
     assert result["status"] == "ERROR"
     assert result["retrieval_failure"]["type"] == "backend_unavailable"
     assert "private configuration" not in repr(result)
-    assert graph.call_count == vector.call_count == 1
+    assert graph.call_count == 2 and vector.call_count == 1
+    assert result["retrieval_attempts"][0]["retry_count"] == 1
 
 
 def test_failed_graph_can_fall_back_to_cited_vector_result():
@@ -153,3 +154,77 @@ def test_legacy_api_exposes_single_failed_attempt_without_secret(monkeypatch):
     assert calls == [("vector", "legacy-smoke"), ("structured", "legacy-smoke")]
     assert result["retrieval_attempts"][-1]["failure"]["type"] == "backend_unavailable"
     assert "private connection string" not in response.text
+
+
+def test_graph_filter_error_does_not_retry_or_fall_back():
+    class FilterNotSupportedError(ValueError):
+        pass
+
+    graph = Mock(side_effect=FilterNotSupportedError("not an available filter"))
+    vector = Mock()
+    result = run_tool_selection(request(), {"graph": graph, "vector": vector}, "unsupported")
+    assert result["status"] == "ERROR"
+    assert result["retrieval_failure"]["type"] == "unsupported_filter"
+    assert result["retrieval_attempts"][0]["retry_count"] == 0
+    graph.assert_called_once()
+    vector.assert_not_called()
+
+
+def test_graph_retries_once_then_uses_same_backend():
+    class RetrievalUnavailableError(RuntimeError):
+        pass
+
+    graph = Mock(side_effect=[RetrievalUnavailableError("cold service"), [ROW]])
+    vector = Mock()
+    result = run_tool_selection(request(), {"graph": graph, "vector": vector}, "cold")
+    assert result["used_tool"] == "graph"
+    assert result["retrieval_attempts"][0]["retry_count"] == 1
+    assert graph.call_count == 2
+    vector.assert_not_called()
+
+
+def test_subsidiary_requires_claim_and_location_without_vector_fallback():
+    evidence = {**ROW, "text": "An unsupported claim about subsidiaries in Canada."}
+    graph = Mock(return_value=[evidence])
+    vector = Mock()
+    state = request("Which subsidiaries does Microsoft have in Ireland?")
+    result = run_tool_selection(state, {"graph": graph, "vector": vector}, "location")
+    assert result["selected_tool"] == "graph" and result["status"] == "NO_EVIDENCE"
+    vector.assert_not_called()
+
+
+def test_structured_quarter_rejects_nine_month_and_nonconsolidated_inputs():
+    from agent.routing import evaluate_structured_lookup
+
+    metadata = {
+        **ROW["metadata"], "ticker": "AAPL", "fact_id": "fact", "form": "10-Q",
+        "concept": "us-gaap:NetIncomeLoss", "period_start": "2026-03-29", "period_end": "2026-06-27",
+        "dimensions": [], "value_num": 100,
+    }
+    valid = {"text": "us-gaap:NetIncomeLoss: 100 USD", "metadata": metadata}
+    cases = [
+        valid,
+        {**valid, "metadata": {**metadata, "period_start": "2025-09-28"}},
+        {**valid, "metadata": {**metadata, "dimensions": [{"member": "segment"}]}},
+        {**valid, "metadata": {**metadata, "concept": "us-gaap:OperatingIncomeLoss"}},
+    ]
+    filters = {"ticker": "AAPL", "fiscal_year": 2026, "fiscal_period": "Q3"}
+    assert evaluate_structured_lookup("What was Apple's net income in Q3 FY2026?", cases, filters) == [valid]
+
+
+def test_api_preserves_graph_claim_provenance(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import api.main
+
+    metadata = {**ROW["metadata"], "claim_id": "claim", "retrieval_method": "neo4j_fulltext_claim", "trace_id": "claimed"}
+    monkeypatch.setattr(api.main, "run_integrated_agent", lambda **_: {
+        "status": "SUCCESS", "used_tool": "graph", "evidence": [{"text": "claim", "metadata": metadata}],
+        "joint_trace": {},
+    })
+    data = TestClient(api.main.app).post("/query", json={"query": "Find claims", "trace_id": "claimed"}).json()
+    assert data["citations"] == []
+    citation = data["retrieval_citations"][0]
+    assert (citation["claim_id"], citation["section_id"], citation["retrieval_method"], citation["trace_id"]) == (
+        "claim", "s1", "neo4j_fulltext_claim", "claimed",
+    )

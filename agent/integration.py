@@ -46,6 +46,7 @@ def run_integrated_agent(
     if os.getenv("KPMG_RAG_BACKEND") == "real" and os.getenv("KPMG_COVERAGE_PRECHECK", "0") == "1":
         joint_retrieval = partial(
             run_joint_retrieval, trace_id=trace_id, graph_enabled=os.getenv("KPMG_GRAPHRAG_ENABLED") == "1",
+            tools=tools,
         )
 
     # Run LangGraph with actual team implementations.

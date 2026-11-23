@@ -15,6 +15,8 @@ from agent.chroma_warmup import warm_chroma
 from agent.integration import run_integrated_agent
 from agent.tools.rag_tool import retrieve_evidence_result
 from agent.routing import evaluate_financial_evidence
+from agent.query_parser import understand_query
+from agent.tool_selection import select_tool
 from agent.tools.graphrag_tool import retrieve_graph_evidence, retrieve_structured_evidence
 
 @asynccontextmanager
@@ -48,12 +50,23 @@ def financial_explorer():
     return FileResponse(configured, media_type="text/html")
 
 
+def _evaluate_legacy_fallback(**inputs):
+    query = inputs["query"]
+    _, intent = select_tool(query, None, understand_query(query))
+    if intent == "narrative":
+        return inputs["rag_evidence"] or inputs["graphrag_evidence"]
+    if intent == "financial":
+        return evaluate_financial_evidence(**inputs)
+    return []
+
+
 @app.post("/query")
 def query_agent(request: QueryRequest):
     start = perf_counter()
     trace_id = request.trace_id or str(uuid.uuid4())
     workflow_options = {"trace_id": trace_id}
-    if os.getenv("KPMG_GRAPHRAG_ENABLED") == "1" and os.getenv("KPMG_TOOL_SELECTION") == "auto":
+    default_mode = "legacy" if os.getenv("KPMG_GRAPHRAG_ARM") else "auto"
+    if os.getenv("KPMG_GRAPHRAG_ENABLED") == "1" and os.getenv("KPMG_TOOL_SELECTION", default_mode) == "auto":
         workflow_options = {
             "tools": {"vector": retrieve_evidence_result, "structured": retrieve_structured_evidence,
                       "graph": retrieve_graph_evidence},
@@ -69,7 +82,7 @@ def query_agent(request: QueryRequest):
             raise HTTPException(status_code=503, detail="Invalid KPMG_GRAPHRAG_ARM configuration")
         workflow_options = {
             "graphrag_retriever": partial(retrievers[arm], trace_id=trace_id),
-            "evidence_evaluator": evaluate_financial_evidence,
+            "evidence_evaluator": _evaluate_legacy_fallback,
             "trace_id": trace_id,
             "fallback_tool": arm,
         }
@@ -92,7 +105,7 @@ def query_agent(request: QueryRequest):
             if source_url:
                 provenance = {
                     key: metadata[key]
-                    for key in ("section_id", "fact_id", "chunk_id", "accession_number", "section", "section_title")
+                    for key in ("section_id", "fact_id", "chunk_id", "accession_number", "section", "section_title", "claim_id", "retrieval_method", "trace_id")
                     if metadata.get(key) is not None
                 }
                 retrieval_citations.append({

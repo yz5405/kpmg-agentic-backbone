@@ -84,3 +84,33 @@ def test_narrative_accepts_only_provenance_scoped_evidence(rag_interfaces, graph
     assert result["status"] == "SUCCESS"
     assert result["joint_trace"]["accepted_count"] == 1
     assert result["filters"]["ticker"] == ["MSFT"]
+
+
+def test_joint_lexical_graph_attempt_precedes_rag(rag_interfaces):
+    coverage, vector = rag_interfaces
+    coverage.check_coverage.return_value = {
+        "status": "all_hit", "entities": [{"ticker": "MSFT"}], "message": "ok",
+        "targets": [{"ticker": "MSFT", "status": "hit", "accessions": ["0001193125-26-191507"]}],
+    }
+    graph = Mock(return_value=[{"text": "A competition disclosure", "metadata": {
+        "ticker": "MSFT", "form": "10-Q", "reporting_period_end": "2026-03-31",
+        "accession_number": "0001193125-26-191507", "section_id": "s1",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526191507/msft.htm",
+    }}])
+    result = run_joint_retrieval(state("Find Microsoft claims about competition"), "graph", True, {"graph": graph})
+    assert result["used_tool"] == "graph"
+    graph.assert_called_once()
+    vector.assert_not_called()
+
+
+def test_joint_quarter_without_year_clarifies(rag_interfaces):
+    coverage, vector = rag_interfaces
+    coverage.extract_request.return_value = {"companies": [], "fiscal_periods": ["Q3"], "fiscal_years": None}
+    coverage.check_coverage.return_value = {"status": "none", "entities": [{"ticker": "MSFT"}],
+                                           "targets": [], "message": "none"}
+    graph = Mock()
+    result = run_joint_retrieval(state("What was Microsoft revenue in Q3?"), "quarter", True, {"graph": graph})
+    assert result["selected_tool"] == "clarification"
+    assert "fiscal year" in result["answer"]
+    vector.assert_not_called()
+    graph.assert_not_called()
