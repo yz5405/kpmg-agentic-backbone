@@ -9,6 +9,7 @@ No LLM API key is required.
 """
 
 from typing import Callable
+from time import perf_counter
 
 from langgraph.graph import StateGraph, START, END
 
@@ -31,6 +32,7 @@ def build_graph(
     tools: dict[str, Callable] | None = None,
     trace_id: str | None = None,
     fallback_tool: str = "graphrag",
+    joint_retrieval: Callable | None = None,
 ):
     """Build and compile the LangGraph workflow."""
 
@@ -41,6 +43,7 @@ def build_graph(
     # NODE 1: Query Understanding
     def query_node(state: AgentGraphState) -> dict:
         try:
+            started = perf_counter()
             parsed = parser(state["query"])
             filters = {
                 key: parsed.get(key)
@@ -56,6 +59,8 @@ def build_graph(
 
             return {
                 "filters": filters,
+                "company": parsed.get("company"),
+                "query_understanding_ms": round((perf_counter() - started) * 1000, 2),
                 "form": parsed.get("form"),
                 "question_type": parsed.get("question_type"),
                 "query_understanding_mode": parsed.get("query_understanding_mode"),
@@ -79,6 +84,8 @@ def build_graph(
 
     # NODE 2: RAG Retrieval
     def retrieval_node(state: AgentGraphState) -> dict:
+        if joint_retrieval is not None:
+            return joint_retrieval(state)
         if tools is not None:
             return run_tool_selection(state, tools, trace_id)
         if state["top_k"] <= 0:
@@ -266,7 +273,11 @@ def build_graph(
         raise ValueError("Answer generation with GraphRAG requires an evidence evaluator")
 
     def answer_node(state: AgentGraphState) -> dict:
+        if state.get("selected_tool") in {"direct_reply", "clarification"}:
+            return {}
+        started = perf_counter()
         update = answer_generator(state)
+        update["answer_ms"] = round((perf_counter() - started) * 1000, 2)
         return {**update, "logs": add_logs(state, "[INFO] Answer generation completed")}
 
     # BUILD STATEGRAPH
@@ -308,7 +319,7 @@ def build_graph(
         },
     )
 
-    graph.add_edge("retrieval", terminal if tools is not None else "routing")
+    graph.add_edge("retrieval", terminal if tools is not None or joint_retrieval is not None else "routing")
 
     graph.add_conditional_edges(
         "routing",
@@ -332,6 +343,7 @@ def run_graph_agent(
     tools: dict[str, Callable] | None = None,
     trace_id: str | None = None,
     fallback_tool: str = "graphrag",
+    joint_retrieval: Callable | None = None,
 ) -> AgentGraphState:
     """Execute the workflow with injected module functions."""
 
@@ -345,6 +357,7 @@ def run_graph_agent(
         tools=tools,
         trace_id=trace_id,
         fallback_tool=fallback_tool,
+        joint_retrieval=joint_retrieval,
     )
 
     initial_state = create_graph_state(

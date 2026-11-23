@@ -81,7 +81,7 @@ def query_agent(request: QueryRequest):
             if source_url:
                 provenance = {
                     key: metadata[key]
-                    for key in ("section_id", "fact_id", "chunk_id", "accession_number")
+                    for key in ("section_id", "fact_id", "chunk_id", "accession_number", "section", "section_title")
                     if metadata.get(key) is not None
                 }
                 citations.append({
@@ -96,6 +96,9 @@ def query_agent(request: QueryRequest):
 
     return {
         "query": request.query,
+        "joint_trace": result.get("joint_trace"),
+        "query_understanding_ms": result.get("query_understanding_ms"),
+        "answer_ms": result.get("answer_ms"),
         "selected_tool": result.get("selected_tool", "vector"),
         "used_tool": result.get("used_tool"),
         "retrieval_attempts": result.get("retrieval_attempts", []),
