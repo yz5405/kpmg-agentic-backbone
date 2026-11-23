@@ -1,5 +1,6 @@
 import os
 import uuid
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
 from time import perf_counter
@@ -7,16 +8,25 @@ from time import perf_counter
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from agent.answer_node import AnswerConfigurationError
+from agent.chroma_warmup import warm_chroma
 from agent.integration import run_integrated_agent
 from agent.tools.rag_tool import retrieve_evidence_result
 from agent.routing import evaluate_financial_evidence
 from agent.tools.graphrag_tool import retrieve_graph_evidence, retrieve_structured_evidence
 
+@asynccontextmanager
+async def lifespan(application):
+    application.state.chroma_warmup = await run_in_threadpool(warm_chroma)
+    yield
+
+
 app = FastAPI(
     title="KPMG Agentic Backbone API",
-    version="0.2.0"
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 
@@ -74,6 +84,7 @@ def query_agent(request: QueryRequest):
         raise HTTPException(status_code=503, detail=str(exc)) from None
 
     citations = result.get("citations") or []
+    retrieval_citations = []
     if not citations and result.get("status") == "SUCCESS" and not result.get("answer"):
         for item in result.get("evidence", []):
             metadata = item.get("metadata", {})
@@ -84,7 +95,7 @@ def query_agent(request: QueryRequest):
                     for key in ("section_id", "fact_id", "chunk_id", "accession_number", "section", "section_title")
                     if metadata.get(key) is not None
                 }
-                citations.append({
+                retrieval_citations.append({
                     **provenance,
                     "source_url": source_url,
                     "ticker": metadata.get("ticker"),
@@ -94,8 +105,15 @@ def query_agent(request: QueryRequest):
                     "reporting_period_end": metadata.get("reporting_period_end"),
                 })
 
+    if result.get("joint_trace") is None:
+        citations = citations or retrieval_citations
+
     return {
         "query": request.query,
+        "calculation_status": result.get("calculation_status", "not_required"),
+        "calculation_reason": result.get("calculation_reason"),
+        "chroma_warmup": getattr(app.state, "chroma_warmup", None),
+        "retrieval_citations": retrieval_citations,
         "joint_trace": result.get("joint_trace"),
         "query_understanding_ms": result.get("query_understanding_ms"),
         "answer_ms": result.get("answer_ms"),

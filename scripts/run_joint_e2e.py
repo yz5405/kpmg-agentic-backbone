@@ -100,8 +100,26 @@ def main():
     parser.add_argument("checklist", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--cases", nargs="+", type=int)
+    parser.add_argument("--live-llm", action="store_true",
+                        help="Use only after approved credentials and model are configured locally")
     args = parser.parse_args()
     cases = checklist(args.checklist)
+    if args.live_llm:
+        required = ("OPENAI_API_KEY", "KPMG_ANSWER_MODEL")
+        if not all(os.environ.get(key) for key in required):
+            parser.error("Live LLM requires approved local credentials and an answer model")
+        os.environ["KPMG_QUERY_LLM_ENABLED"] = "1"
+        os.environ["KPMG_ANSWER_ENABLED"] = "1"
+    else:
+        os.environ["KPMG_QUERY_LLM_ENABLED"] = "0"
+        os.environ["KPMG_ANSWER_ENABLED"] = "0"
+    # This runner measures retrieval directly; startup timing is tested separately.
+    os.environ["KPMG_CHROMA_WARMUP"] = "0"
+    if args.cases and not set(args.cases) <= set(range(1, 16)):
+        parser.error("--cases must contain checklist numbers 1–15")
+    if args.cases and 14 in args.cases and 1 not in args.cases:
+        parser.error("Include case 1 when testing cross-process case 14")
     if args.fresh:
         response = execute(14, cases[13]["question"], False)
         print(json.dumps(response))
@@ -118,9 +136,12 @@ def main():
     citation_review = None
     for item in cases:
         number = item["case"]
+        if args.cases and number not in args.cases:
+            continue
         if number == 14:
             response = json.loads(subprocess.check_output([
                 sys.executable, __file__, str(args.checklist), str(args.output), "--fresh",
+                *(["--live-llm"] if args.live_llm else []),
             ], text=True))
         else:
             response = execute(number, item["question"], number in (13, 15))
@@ -143,7 +164,8 @@ def main():
                 "answer_status": "Model Answer Returned" if response.get("answer") and response.get("llm_calls")
                                  else "Final Answer Pending Authorization",
                 "answer": response.get("answer"),
-                "retrieval_citations": response.get("citations", []),
+                "retrieval_citations": response.get("retrieval_citations", []),
+                "answer_citations": response.get("citations", []),
                 "evidence": [
                     {**{key: row["metadata"].get(key) for key in
                          ("chunk_id", "accession_number", "section", "section_title", "source_url")},
@@ -165,6 +187,13 @@ def main():
             "selected_tool": response.get("selected_tool"), "used_tool": response.get("used_tool"),
             "fallback_attempts": response.get("fallback_attempts"), "answer": response.get("answer"),
             "citations": response.get("citations", []), "candidate_citations": candidates,
+            "retrieval_citations": response.get("retrieval_citations", []),
+            "calculation_status": response.get("calculation_status"), "calculation_reason": response.get("calculation_reason"),
+            "verified_financial_inputs": [
+                {"chunk_id": row["metadata"].get("chunk_id"), "ticker": row["metadata"].get("ticker"),
+                 **row["metadata"]["verified_financial_input"]}
+                for row in evidence if "verified_financial_input" in row["metadata"]
+            ],
             "ordered_evidence_ids": ordered_ids, "runner_pid": response["runner_pid"],
             "fresh_process_order_match": compare_equal,
             "latency_ms": {**joint.get("latency_ms", {}), "query_understanding": response.get("query_understanding_ms"),
@@ -173,7 +202,8 @@ def main():
         })
         print(number, outcome, reason, flush=True)
     counts = collections.Counter(row["outcome"] for row in records)
-    (args.output / "joint-e2e-15-traces.jsonl").write_text(
+    prefix = "joint-e2e-15" if not args.cases else "joint-e2e-focused"
+    (args.output / f"{prefix}-traces.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records))
     if citation_review is not None:
         (args.output / "case-08-citation-review.json").write_text(
@@ -188,7 +218,7 @@ def main():
         "", "| Case | Outcome | Reason |", "| --- | --- | --- |",
     ]
     report += [f"| {r['case']} | {r['outcome']} | {r['reason']} |" for r in records]
-    (args.output / "joint-e2e-15-results.md").write_text("\n".join(report) + "\n")
+    (args.output / f"{prefix}-results.md").write_text("\n".join(report) + "\n")
 
 
 if __name__ == "__main__":

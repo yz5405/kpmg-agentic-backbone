@@ -273,7 +273,7 @@ def build_graph(
         raise ValueError("Answer generation with GraphRAG requires an evidence evaluator")
 
     def answer_node(state: AgentGraphState) -> dict:
-        if state.get("selected_tool") in {"direct_reply", "clarification"}:
+        if state.get("calculation_status") == "blocked" or state.get("selected_tool") in {"direct_reply", "clarification"}:
             return {}
         started = perf_counter()
         update = answer_generator(state)

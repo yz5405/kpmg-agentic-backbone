@@ -35,7 +35,7 @@ class AnswerGenerator:
     def __call__(self, state: dict) -> dict:
         result = {"answer": None, "citations": [], "model": None,
                   "llm_calls": 0, "token_usage": None}
-        if state.get("status") == "ERROR" or state.get("error"):
+        if state.get("status") == "ERROR" or state.get("error") or state.get("calculation_status") == "blocked":
             return result
         evidence = state.get("evidence", [])
         if state.get("status") == "NO_EVIDENCE" or not evidence:
@@ -105,6 +105,12 @@ class AnswerGenerator:
                 if not answer.strip() or not ids or refs != set(ids):
                     raise ValueError("Answer references must match citations")
                 unique_ids = list(dict.fromkeys(ids))
+                driver_ids = {
+                    index for index, item in enumerate(evidence, 1)
+                    if item.get("metadata", {}).get("answer_evidence_role") == "quarter_driver"
+                }
+                if driver_ids and driver_ids.isdisjoint(unique_ids):
+                    raise ValueError("Quarterly drivers must cite a supporting narrative disclosure")
                 citations = [
                     {**deepcopy(evidence[i - 1].get("metadata", {})), "evidence_id": i}
                     for i in unique_ids

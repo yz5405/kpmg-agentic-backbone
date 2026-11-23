@@ -3,6 +3,7 @@
 import re
 from time import perf_counter
 
+from agent.joint_evidence import financial_inputs, is_quarter_cloud_drivers, quarter_cloud_evidence
 from agent.tool_selection import _has_sec_provenance, describe_retrieval_error, select_tool
 from agent.tools.rag_tool import _to_evidence
 
@@ -115,13 +116,20 @@ def run_joint_retrieval(state, trace_id, graph_enabled):
         _, intent = select_tool(
             state["query"], None if question_type == "relationship" else question_type, precheck["filters"],
         )
-        # Keep both sides in the trace while withholding unsupported calculations from the answer model.
         comparison = len(subqueries) > 1 and bool(re.search(r"\b(compare|comparison|versus)\b", state["query"], re.I))
-        if intent.startswith("unsupported_") or comparison or _YOY.search(state["query"]):
+        periods = precheck["periods"].get("period_ends") or []
+        if intent == "unsupported_calculation" or comparison or _YOY.search(state["query"]):
+            accepted = financial_inputs(accepted, state["query"], periods)
+            result["calculation_status"] = "blocked"
+            result["calculation_reason"] = "unsupported_calculation"
+            result["retrieval_limitation"] = "A deterministic calculator is required for this question."
+        elif intent == "unsupported_relationship":
             accepted = []
-            result["retrieval_limitation"] = (
-                "A deterministic calculator or supported graph operation is required for this question."
-            )
+            result["retrieval_limitation"] = "A supported graph operation is required for this question."
+        elif is_quarter_cloud_drivers(state["query"]):
+            accepted = quarter_cloud_evidence(accepted, periods)
+        trace["calculation_status"] = result.get("calculation_status", "not_required")
+        trace["calculation_reason"] = result.get("calculation_reason")
         trace["accepted_count"] = len(accepted)
         trace["latency_ms"]["evidence_validation"] = round((perf_counter() - started) * 1000, 2)
         return {
