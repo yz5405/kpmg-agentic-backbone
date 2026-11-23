@@ -33,7 +33,7 @@ def execute(case, question, graph):
     trace_id = f"joint-e2e-{case:02d}"
     with TestClient(app) as client:
         response = client.post("/query", json={"query": question, "top_k": 15, "trace_id": trace_id})
-    return response.json()
+    return {**response.json(), "runner_pid": os.getpid()}
 
 
 def verdict(case, response, joint, compare_equal):
@@ -115,6 +115,7 @@ def main():
     persistence = persistence_report(index)
     args.output.mkdir(parents=True, exist_ok=True)
     records = []
+    citation_review = None
     for item in cases:
         number = item["case"]
         if number == 14:
@@ -126,9 +127,30 @@ def main():
         joint = response.get("joint_trace") or {}
         pre = joint.get("precheck") or {}
         candidates = joint.get("candidate_citations", [])
+        evidence = response.get("evidence", [])
+        ordered_ids = [item["metadata"].get("chunk_id") for item in evidence]
         compare_equal = None
-        if number == 14 and candidates and records[0]["candidate_citations"]:
-            compare_equal = candidates == records[0]["candidate_citations"]
+        if number == 14 and ordered_ids and records[0]["ordered_evidence_ids"]:
+            compare_equal = (
+                response["runner_pid"] != records[0]["runner_pid"]
+                and candidates == records[0]["candidate_citations"]
+                and ordered_ids == records[0]["ordered_evidence_ids"]
+            )
+        if number == 8:
+            citation_review = {
+                "question": item["question"], "trace_id": response.get("trace_id"),
+                "index_version": meta["index_version"], "backend": "chroma",
+                "answer_status": "Model Answer Returned" if response.get("answer") and response.get("llm_calls")
+                                 else "Final Answer Pending Authorization",
+                "answer": response.get("answer"),
+                "retrieval_citations": response.get("citations", []),
+                "evidence": [
+                    {**{key: row["metadata"].get(key) for key in
+                         ("chunk_id", "accession_number", "section", "section_title", "source_url")},
+                     "text": row["text"]}
+                    for row in evidence
+                ],
+            }
         outcome, reason = verdict(number, response, joint, compare_equal)
         records.append({
             **item, "trace_id": response.get("trace_id"), "index_version": meta["index_version"],
@@ -143,6 +165,8 @@ def main():
             "selected_tool": response.get("selected_tool"), "used_tool": response.get("used_tool"),
             "fallback_attempts": response.get("fallback_attempts"), "answer": response.get("answer"),
             "citations": response.get("citations", []), "candidate_citations": candidates,
+            "ordered_evidence_ids": ordered_ids, "runner_pid": response["runner_pid"],
+            "fresh_process_order_match": compare_equal,
             "latency_ms": {**joint.get("latency_ms", {}), "query_understanding": response.get("query_understanding_ms"),
                            "answer": response.get("answer_ms"), "total": response.get("latency_ms")},
             "outcome": outcome, "reason": reason,
@@ -151,6 +175,10 @@ def main():
     counts = collections.Counter(row["outcome"] for row in records)
     (args.output / "joint-e2e-15-traces.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in records))
+    if citation_review is not None:
+        (args.output / "case-08-citation-review.json").write_text(
+            json.dumps(citation_review, ensure_ascii=False, indent=2) + "\n",
+        )
     report = [
         "# Agent × RAG joint E2E", "",
         f"PASS {counts['PASS']} · FAIL {counts['FAIL']} · BLOCKED {counts['BLOCKED']}", "",
