@@ -127,15 +127,15 @@ def quarter_cloud_evidence(rows, period_ends):
             continue
         safe = {key: m[key] for key in (
             "ticker", "form", "accession_number", "chunk_id", "section_id", "section", "section_title",
-            "source_url", "reporting_period_end", "fiscal_year", "fiscal_period",
+            "source_url", "trace_id", "retrieval_method", "index_version", "reporting_period_end", "fiscal_year", "fiscal_period",
         ) if key in m}
         if m.get("is_table"):
             fact = _revenue_fact(row, rows, "intelligent_cloud")
             if fact:
-                corroborating.append({"metadata": {**safe, "answer_evidence_role": "quarter_amount"}, "text":
+                corroborating.append({"metadata": {**safe, "answer_evidence_role": "quarter_amount"}, "text": text, "derived_context": {"answer_text":
                     f"Intelligent Cloud revenue (USD millions, three months ended {fact['period_end']}): "
                     f"{fact['as_reported']}; comparative three months ended {fact['comparative_period_end']}: "
-                    f"{fact['comparative_as_reported']}."})
+                    f"{fact['comparative_as_reported']}.", "financial_input": fact}})
             continue
         if "management" not in (m.get("section_title") or "").lower():
             continue
@@ -150,6 +150,7 @@ def quarter_cloud_evidence(rows, period_ends):
         if headings and headings[-1][1].lower() == "three" and _as_date(headings[-1][2]) == period_ends[0]:
             primary.append({
                 "metadata": {**safe, "answer_evidence_role": "quarter_driver"},
-                "text": f"Three months ended {period_ends[0]}\n\n{segment[0].strip()}",
+                "text": text,
+                "derived_context": {"answer_text": segment[0].strip(), "period_end": period_ends[0], "duration_months": 3},
             })
     return primary + corroborating if primary else []

@@ -43,7 +43,7 @@ class AnswerGenerator:
                     "answer": "Insufficient evidence to answer this question."}
         try:
             # Keep provenance local. The model selects IDs, never writes citation metadata.
-            passages = [{"id": i, "text": item["text"], "metadata": item.get("metadata", {})}
+            passages = [{"id": i, "text": item.get("derived_context", {}).get("answer_text", item["text"]), "metadata": item.get("metadata", {})}
                         for i, item in enumerate(evidence, 1)]
             payload = json.dumps({"question": state["query"], "evidence": passages}, ensure_ascii=False)
             if len(payload) > self.max_context_chars:

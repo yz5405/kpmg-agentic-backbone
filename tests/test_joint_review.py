@@ -66,10 +66,14 @@ def test_period_selection_and_answer_citation_are_independent():
     ]
     selected = quarter_cloud_evidence(rows, ["2026-03-31"])
     assert [row["metadata"]["chunk_id"] for row in selected] == ["C1-0087", "C1-0089", "C1-0072"]
-    assert all("98,485" not in row["text"] and "29%" not in row["text"] and "parent_text" not in row["metadata"] for row in selected)
+    assert [r["text"] for r in selected] == [quarter, TABLE, TABLE]
+    assert [r["metadata"]["source_url"] for r in selected] == [META["source_url"]] * 3
+    assert selected[1]["derived_context"]["financial_input"]["unit"] == "USD millions"
+    assert all("98,485" not in row["derived_context"]["answer_text"] and "29%" not in row["derived_context"]["answer_text"] and "parent_text" not in row["metadata"] for row in selected)
     fake = FakeClient(completion("Azure drove growth [2].", ids=[2]), completion("Azure drove growth [1].", ids=[1]))
     result = AnswerGenerator(fake, model="test")({"query": "What drove growth?", "evidence": selected})
     assert len(fake.calls) == 2
+    assert "98,485" not in fake.calls[0]["messages"][1]["content"]
     assert [citation["chunk_id"] for citation in result["citations"]] == ["C1-0087"]
 
 
@@ -90,3 +94,23 @@ def test_warmup_respects_local_embedding_allowlist(monkeypatch, tmp_path):
     monkeypatch.setenv("RAG_CHROMA_DIR", str(tmp_path))
     (tmp_path / "meta.json").write_text('{"embedder":"openai:example"}')
     assert warm_chroma()["status"] == "skipped"
+
+
+def test_api_keeps_original_table_text_and_derived_context_separate(monkeypatch):
+    import api.main
+
+    driver = "Intelligent Cloud\n\nRevenue increased 30%, driven by Azure."
+    selected = quarter_cloud_evidence([
+        evidence("C1-0087", driver, parent_text="Three Months Ended March 31, 2026\n\n" + driver),
+        evidence("C1-0089", TABLE, is_table=True, trace_id="verbatim"),
+    ], ["2026-03-31"])
+    assert len(selected) == 2
+    monkeypatch.setattr(api.main, "run_integrated_agent", lambda **_: {
+        "status": "SUCCESS", "evidence": selected, "joint_trace": {},
+    })
+    result = TestClient(app).post("/query", json={"query": "What drove growth?"}).json()
+    assert result["evidence"][1]["text"] == TABLE
+    assert result["evidence"][1]["derived_context"]["financial_input"]["duration_months"] == 3
+    assert result["retrieval_citations"][1]["chunk_id"] == "C1-0089"
+    assert result["retrieval_citations"][1]["trace_id"] == "verbatim"
+    assert result["citations"] == []

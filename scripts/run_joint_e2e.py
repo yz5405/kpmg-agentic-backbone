@@ -169,7 +169,7 @@ def main():
                 "evidence": [
                     {**{key: row["metadata"].get(key) for key in
                          ("chunk_id", "accession_number", "section", "section_title", "source_url")},
-                     "text": row["text"]}
+                     "text": row["text"], "derived_context": row.get("derived_context")}
                     for row in evidence
                 ],
             }
