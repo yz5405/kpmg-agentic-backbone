@@ -3,7 +3,7 @@
 import re
 from time import perf_counter
 
-from agent.joint_evidence import financial_inputs, is_quarter_cloud_drivers, quarter_cloud_evidence
+from agent.joint_evidence import financial_inputs, is_quarter_cloud_drivers, quarter_cloud_evidence, scope_annual_evidence
 from agent.tool_selection import _has_sec_provenance, describe_retrieval_error, is_subsidiary_lookup, needs_fiscal_year, run_tool_selection, select_tool
 from agent.query_parser import KNOWN_TICKERS, understand_query
 from agent.calculator import calculate
@@ -169,9 +169,10 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
         rows = [_to_evidence(row) for row in envelope["results"]]
         scoped = {(sq["filters"]["ticker"], a) for sq in subqueries for a in sq["filters"]["accession_number"]}
         accepted = [
-            row for row in rows if _has_sec_provenance(row)
+            scoped_row for row in rows if _has_sec_provenance(row)
             and (row["metadata"]["ticker"], row["metadata"].get("accession_number")) in scoped
             and row["metadata"].get("chunk_id") and row.get("text", "").strip()
+            and (scoped_row := scope_annual_evidence(row, state["query"], precheck["periods"])) is not None
         ]
         trace["returned_count"] = len(rows)
         trace["candidate_citations"] = [

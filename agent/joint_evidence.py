@@ -126,7 +126,7 @@ def quarter_cloud_evidence(rows, period_ends):
         if m.get("ticker") != "MSFT" or m.get("form") != "10-Q" or m.get("reporting_period_end") != period_ends[0]:
             continue
         safe = {key: m[key] for key in (
-            "ticker", "form", "accession_number", "chunk_id", "section_id", "section", "section_title",
+            "company_name", "ticker", "form", "accession_number", "chunk_id", "section_id", "section", "section_title",
             "source_url", "trace_id", "retrieval_method", "index_version", "reporting_period_end", "fiscal_year", "fiscal_period",
         ) if key in m}
         if m.get("is_table"):
@@ -154,3 +154,57 @@ def quarter_cloud_evidence(rows, period_ends):
                 "derived_context": {"answer_text": segment[0].strip(), "period_end": period_ends[0], "duration_months": 3},
             })
     return primary + corroborating if primary else []
+
+
+# SEC registrant names keyed by the supported ticker, used only when absent.
+COMPANY_NAMES = {
+    "AAPL": "Apple Inc.", "CASY": "Casey's General Stores, Inc.",
+    "MCK": "McKesson Corporation", "MDT": "Medtronic plc",
+    "MSFT": "Microsoft Corporation", "MU": "Micron Technology, Inc.",
+    "NKE": "NIKE, Inc.", "NTAP": "NetApp, Inc.",
+    "PH": "Parker-Hannifin Corporation", "TTWO": "Take-Two Interactive Software, Inc.",
+    "GOOGL": "Alphabet Inc.", "AMZN": "Amazon.com, Inc.", "WMT": "Walmart Inc.",
+    "INTC": "Intel Corporation", "CAH": "Cardinal Health, Inc.", "WDC": "Western Digital Corporation",
+}
+
+
+def scope_annual_evidence(row, question, periods):
+    """Keep exact filings and isolate verified annual comparative revenue cells."""
+    years = periods.get("fiscal_years")
+    if not years or not (periods.get("forms") == ["10-K"] or periods.get("fiscal_periods") == ["FY"]):
+        return row
+    metadata = row["metadata"]
+    filing_year = metadata.get("fiscal_year")
+    if filing_year in years:
+        return row
+    if (metadata.get("form") != "10-K" or not metadata.get("is_table")
+            or not isinstance(filing_year, int) or filing_year - 1 not in years
+            or not re.search(r"\brevenue\b", question, re.I)):
+        return None
+    lines = row["text"].splitlines()
+    for index, line in enumerate(lines):
+        if not line.lstrip().startswith("|"):
+            continue
+        headers = _cells(line)
+        if len(headers) < 3 or not _UNITS.search("\n".join(lines[:index])):
+            continue
+        dates = [re.fullmatch(r"year ended ([A-Za-z]+ \d{1,2}, \d{4})", h, re.I)
+                 for h in headers[1:]]
+        ends = [_as_date(match[1]) if match else None for match in dates]
+        if not ends[0] or ends[0] != metadata.get("reporting_period_end") or not ends[1]:
+            continue
+        if not 350 <= (date.fromisoformat(ends[0]) - date.fromisoformat(ends[1])).days <= 380:
+            continue
+        for candidate in lines[index + 1:]:
+            if not candidate.lstrip().startswith("|"):
+                break
+            cells = _cells(candidate)
+            if (len(cells) == len(headers) and cells[0].lower() in {"total revenue", "total net sales"}
+                    and _AMOUNT.fullmatch(cells[2])):
+                year = filing_year - 1
+                return {**row, "derived_context": {
+                    "answer_text": f"{cells[0]} for the year ended {ends[1]} (millions): {cells[2]}.",
+                    "evidence_fiscal_year": year, "requested_fiscal_year": year,
+                    "period_end": ends[1], "as_reported": cells[2],
+                }}
+    return None

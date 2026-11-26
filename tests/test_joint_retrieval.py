@@ -162,3 +162,27 @@ def test_contract_calculator():
     assert "2026-03-31" in answer and "2026-06-27" in answer
     apple["metadata"]["verified_financial_input"]["unit"] = "USD thousands"
     assert calculate([row, apple], "difference", ["MSFT", "AAPL"]) is None
+
+
+@pytest.mark.parametrize("filing_year,header,accepted", [
+    (2023, "", True),
+    (2024, "| | Year ended June 30, 2024 | Year ended June 30, 2023 |", True),
+    (2024, "", False),
+    (2024, "| | Three months ended June 30, 2024 | Three months ended June 30, 2023 |", False),
+])
+def test_annual_evidence_requires_explicit_comparative_header(filing_year, header, accepted):
+    from agent.joint_evidence import scope_annual_evidence
+
+    row = {"metadata": {"form": "10-K", "fiscal_year": filing_year, "is_table": True,
+                        "reporting_period_end": f"{filing_year}-06-30"},
+           "text": f"(In millions)\n{header}\n| Total Revenue | $100 | $90 |"}
+    scoped = scope_annual_evidence(row, "What was revenue in fiscal year 2023?",
+                                  {"forms": ["10-K"], "fiscal_years": [2023]})
+    assert (scoped is not None) == accepted
+    if scoped:
+        assert scoped["text"] == row["text"]
+        assert scoped["metadata"]["fiscal_year"] == filing_year
+        if filing_year == 2024:
+            assert scoped["derived_context"]["period_end"] == "2023-06-30"
+            assert scoped["derived_context"]["as_reported"] == "$90"
+            assert "$100" not in scoped["derived_context"]["answer_text"]
