@@ -68,10 +68,19 @@ def verdict(case, response, joint, compare_equal):
         seen = {c["ticker"] for c in joint.get("candidate_citations", [])}
         if targets != {"MSFT", "AAPL"} or joint.get("n_subqueries") != 2 or seen != targets:
             return "FAIL", f"Expected two scoped subqueries with both companies; observed {sorted(seen)}"
+        if response.get("calculation_status") == "completed":
+            cited = {(c.get("ticker"), c.get("reporting_period_end")) for c in response.get("citations", [])}
+            expected = {("MSFT", "2026-03-31"), ("AAPL", "2026-06-27")}
+            return ("PASS", "Deterministic difference cites both distinct filing periods") if cited == expected else (
+                "FAIL", "Comparison did not cite the expected filing periods")
         return "BLOCKED", "Two real subqueries returned both tickers; deterministic comparison calculator is unavailable"
     if case == 5:
         return ("PASS", "Mircon resolved to MU and real retrieval ran") if targets == {"MU"} and called else ("FAIL", "MU typo resolution or retrieval failed")
     if case == 12:
+        if response.get("calculation_status") == "completed":
+            return ("PASS", "Deterministic 18.3% YoY growth with SEC citations") if (
+                "18.3%" in answer and response.get("citations")
+            ) else ("FAIL", "Unexpected YoY result or missing citations")
         return ("BLOCKED", "Real filing retrieval ran; deterministic YoY calculator is unavailable") if called else ("FAIL", "Expected real retrieval before calculation")
     if case in (1, 2, 3, 8, 9, 15):
         if pre.get("status") != "all_hit" or not called or not accepted:

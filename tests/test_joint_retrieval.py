@@ -17,6 +17,7 @@ def rag_interfaces(monkeypatch):
     coverage.check_coverage = Mock()
     retrieve = ModuleType("rag.retrieve")
     retrieve.retrieve_multi = Mock()
+    retrieve.retrieve_with_status = retrieve.retrieve_multi
     monkeypatch.setitem(sys.modules, "rag.coverage", coverage)
     monkeypatch.setitem(sys.modules, "rag.retrieve", retrieve)
     return coverage, retrieve.retrieve_multi
@@ -114,3 +115,50 @@ def test_joint_quarter_without_year_clarifies(rag_interfaces):
     assert "fiscal year" in result["answer"]
     vector.assert_not_called()
     graph.assert_not_called()
+
+@pytest.mark.parametrize("ticker,alias", [
+    ("AAPL", "Apple"), ("CASY", "Casey's"), ("MCK", "McKesson"), ("MDT", "Medtronic"),
+    ("MSFT", "Microsoft"), ("MU", "Micron"), ("NKE", "Nike"), ("NTAP", "NetApp"),
+    ("PH", "Parker Hannifin"), ("TTWO", "Take-Two"), ("GOOGL", "Google"),
+    ("AMZN", "Amazon"), ("WMT", "Wal-Mart"), ("INTC", "Intel"),
+    ("CAH", "Cardinal Health"), ("WDC", "Western Digital"),
+])
+@pytest.mark.parametrize("status", ["none", "unresolved"])
+def test_contract_graph_fallback(rag_interfaces, ticker, alias, status):
+    coverage, vector = rag_interfaces
+    coverage.check_coverage.return_value = {
+        "status": status, "targets": [], "entities": [], "message": "Unavailable in RAG.",
+    }
+    graph = Mock(return_value=[])
+    request = {**state(f"Describe {alias} risks"), "filters": {}, "question_type": None}
+    result = run_joint_retrieval(request, "coverage", True, {"graph": graph})
+    graph.assert_called_once()
+    assert graph.call_args.kwargs["filters"]["ticker"] == ticker
+    assert result["joint_trace"]["retrieval_called"]
+    assert result["status"] == "NO_EVIDENCE"
+    vector.assert_not_called()
+
+
+def test_bare_cardinal_does_not_resolve_to_cah():
+    from agent.query_parser import understand_query
+
+    assert understand_query("Describe Cardinal risks")["ticker"] is None
+
+
+def test_contract_calculator():
+    from agent.calculator import calculate
+
+    fact = {"metric": "revenue", "scope": "consolidated", "unit": "USD millions",
+            "duration_months": 3, "period_end": "2026-03-31", "comparative_period_end": "2025-03-31",
+            "as_reported": "82,886", "comparative_as_reported": "70,066"}
+    row = {"text": "Revenue | 82,886 | 70,066", "metadata": {
+        "ticker": "MSFT", "chunk_id": "example", "verified_financial_input": fact,
+    }}
+    assert "18.3%" in calculate([row], "yoy", ["MSFT"])["answer"]
+    assert calculate([{**row, "text": "wrong"}], "yoy", ["MSFT"]) is None
+    apple = {**row, "metadata": {**row["metadata"], "ticker": "AAPL",
+                                "verified_financial_input": {**fact, "period_end": "2026-06-27"}}}
+    answer = calculate([row, apple], "difference", ["MSFT", "AAPL"])["answer"]
+    assert "2026-03-31" in answer and "2026-06-27" in answer
+    apple["metadata"]["verified_financial_input"]["unit"] = "USD thousands"
+    assert calculate([row, apple], "difference", ["MSFT", "AAPL"]) is None

@@ -16,6 +16,7 @@ Return a JSON object with exactly: status (SUCCESS or NO_EVIDENCE),
 answer (string), citation_ids (list of integer evidence IDs).
 For SUCCESS, use inline references such as [1] in the answer and list exactly
 the referenced IDs in citation_ids. At least one valid reference is required.
+If coverage_notice is present, explain the missing coverage.
 For NO_EVIDENCE, use an empty citation_ids list. Never output source metadata."""
 
 
@@ -45,7 +46,11 @@ class AnswerGenerator:
             # Keep provenance local. The model selects IDs, never writes citation metadata.
             passages = [{"id": i, "text": item.get("derived_context", {}).get("answer_text", item["text"]), "metadata": item.get("metadata", {})}
                         for i, item in enumerate(evidence, 1)]
-            payload = json.dumps({"question": state["query"], "evidence": passages}, ensure_ascii=False)
+            payload_data = {"question": state["query"], "evidence": passages}
+            precheck = (state.get("joint_trace") or {}).get("precheck") or {}
+            if precheck.get("status") == "partial":
+                payload_data["coverage_notice"] = precheck["message"]
+            payload = json.dumps(payload_data, ensure_ascii=False)
             if len(payload) > self.max_context_chars:
                 raise ValueError("context exceeds configured limit")
         except (ValueError, KeyError, TypeError):

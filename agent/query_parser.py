@@ -5,6 +5,15 @@ import re
 # Supported company name -> ticker mapping.
 # Keep this in sync with the ticker universe the RAG team actually retrieves.
 COMPANY_TICKERS = {
+    "alphabet": "GOOGL",
+    "google": "GOOGL",
+    "amazon.com": "AMZN",
+    "amazon": "AMZN",
+    "walmart": "WMT",
+    "wal-mart": "WMT",
+    "intel": "INTC",
+    "cardinal health": "CAH",
+    "western digital": "WDC",
     "apple": "AAPL",
     "casey's": "CASY",
     "caseys": "CASY",

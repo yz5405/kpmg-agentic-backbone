@@ -5,6 +5,8 @@ from time import perf_counter
 
 from agent.joint_evidence import financial_inputs, is_quarter_cloud_drivers, quarter_cloud_evidence
 from agent.tool_selection import _has_sec_provenance, describe_retrieval_error, is_subsidiary_lookup, needs_fiscal_year, run_tool_selection, select_tool
+from agent.query_parser import KNOWN_TICKERS, understand_query
+from agent.calculator import calculate
 from agent.tools.rag_tool import _to_evidence
 
 _POSSESSIVE = re.compile(r"\b([A-Z][\w-]+)[’']s\b")
@@ -59,9 +61,11 @@ def coverage_plan(state):
 def _graph_filters(state, precheck):
     periods = precheck["periods"]
     tickers = list(dict.fromkeys(e["ticker"] for e in precheck["entities"] if e.get("ticker")))
-    if not tickers:
+    if precheck["status"] in {"none", "unresolved"} or not tickers:
         parsed = state["filters"].get("ticker")
         tickers = [parsed] if isinstance(parsed, str) else (parsed or [])
+        if not tickers and (ticker := understand_query(state["query"])["ticker"]):
+            tickers = [ticker]
     filters = {"ticker": tickers[0] if len(tickers) == 1 else tickers} if tickers else {}
     for source, destination in (
         ("fiscal_years", "fiscal_year"), ("fiscal_periods", "fiscal_period"),
@@ -97,7 +101,23 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
                     "answer": "Which fiscal year should I use for that quarter?"}
         if intent == "unsupported_relationship":
             return {**result, "retrieval_limitation": "Graph Search supports claim lookup, not relationship traversal."}
-        if (tools and primary in {"graph", "structured"} and primary in tools and graph_filters.get("ticker")
+        if (precheck["status"] in {"none", "unresolved"} and graph_enabled and tools
+                and isinstance(ticker := graph_filters.get("ticker"), str) and ticker in KNOWN_TICKERS
+                and intent != "unsupported_calculation" and not _EXHIBIT.search(state["query"])
+                and not _YOY.search(state["query"])):
+            backend = "structured" if intent == "financial" and "structured" in tools else "graph"
+            if backend in tools:
+                alternate = run_tool_selection(
+                    graph_state, {backend: tools[backend]}, trace_id, route=(backend, intent),
+                )
+                attempt = alternate["retrieval_attempts"][0]
+                trace.update(retrieval_called=True, backend_attempts=[attempt],
+                             returned_count=attempt.get("returned_count", 0),
+                             accepted_count=attempt.get("accepted_count", 0))
+                if alternate["status"] == "NO_EVIDENCE":
+                    alternate["answer"] = precheck["message"] + " GraphRAG found no verified evidence for the request."
+                return {**result, **alternate}
+        if (tools and precheck["status"] != "partial" and primary in {"graph", "structured"} and primary in tools and graph_filters.get("ticker")
                 and not _EXHIBIT.search(state["query"]) and not _YOY.search(state["query"])
                 and not is_quarter_cloud_drivers(state["query"])):
             primary_attempt = run_tool_selection(
@@ -128,12 +148,20 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
         result["selected_tool"] = "vector"
         trace["retrieval_called"] = True
         started = perf_counter()
-        from rag.retrieve import retrieve_multi
+        if len(subqueries) == 1 and len(precheck["filters"]["accession_number"]) == 1:
+            from rag.retrieve import retrieve_with_status
 
-        envelope = retrieve_multi(
-            state["query"], filters=precheck["filters"], subqueries=subqueries, top_k=state["top_k"],
-            trace_id=trace_id,
-        )
+            envelope = retrieve_with_status(
+                state["query"], filters=subqueries[0]["filters"], top_k=state["top_k"], trace_id=trace_id,
+            )
+            envelope = {**envelope, "subqueries": subqueries, "skipped": []}
+        else:
+            from rag.retrieve import retrieve_multi
+
+            envelope = retrieve_multi(
+                state["query"], filters=precheck["filters"], subqueries=subqueries, top_k=state["top_k"],
+                trace_id=trace_id,
+            )
         trace["latency_ms"]["retrieval"] = round((perf_counter() - started) * 1000, 2)
         trace["n_subqueries"] = len(envelope["subqueries"]) + len(envelope["skipped"])
         trace["subqueries"] = envelope["subqueries"] + envelope["skipped"]
@@ -161,6 +189,16 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
         periods = precheck["periods"].get("period_ends") or []
         if intent == "unsupported_calculation" or comparison or _YOY.search(state["query"]):
             accepted = financial_inputs(accepted, state["query"], periods)
+            operation = "yoy" if _YOY.search(state["query"]) else "difference" if comparison or re.search(
+                r"\bdifference between\b", state["query"], re.I) else None
+            computed = None
+            if precheck["status"] == "all_hit":
+                computed = calculate(accepted, operation, precheck["filters"]["ticker"])
+            if computed:
+                trace.update(calculation_status="completed", accepted_count=len(accepted))
+                return {**result, **computed, "status": "SUCCESS", "used_tool": "vector",
+                        "calculation_status": "completed", "evidence": accepted,
+                        "evidence_status": envelope["evidence_status"]}
             result["calculation_status"] = "blocked"
             result["calculation_reason"] = "unsupported_calculation"
             result["retrieval_limitation"] = "A deterministic calculator is required for this question."
@@ -175,6 +213,7 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
                 and graph_filters.get("ticker")
                 and re.search(r"\b(?:competiti\w*|disclosure\w*|risk\w*)\b", state["query"], re.I)
                 and not is_quarter_cloud_drivers(state["query"])
+                and precheck["status"] != "partial"
                 and (not accepted or envelope["evidence_status"] in {"weak", "empty"})):
             alternate = run_tool_selection(graph_state, {"graph": tools["graph"]}, trace_id, route=("graph", "narrative"))
             vector_attempt = {"tool": "vector", "outcome": "insufficient_evidence",
