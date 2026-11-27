@@ -17,6 +17,7 @@ answer (string), citation_ids (list of integer evidence IDs).
 For SUCCESS, use inline references such as [1] in the answer and list exactly
 the referenced IDs in citation_ids. At least one valid reference is required.
 If coverage_notice is present, explain the missing coverage.
+For financial figures, state the reporting period supported by the cited evidence.
 For NO_EVIDENCE, use an empty citation_ids list. Never output source metadata."""
 
 

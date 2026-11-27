@@ -132,7 +132,14 @@ def test_contract_graph_fallback(rag_interfaces, ticker, alias, status):
     graph = Mock(return_value=[])
     request = {**state(f"Describe {alias} risks"), "filters": {}, "question_type": None}
     result = run_joint_retrieval(request, "coverage", True, {"graph": graph})
+    if ticker in {"CAH", "INTC", "AMZN"}:
+        graph.assert_not_called()
+        assert not result["joint_trace"]["retrieval_called"]
+        assert result["joint_trace"]["graph_coverage_status"] == (
+            "no_filing_coverage" if ticker == "AMZN" else "paused")
+        return
     graph.assert_called_once()
+    assert result["joint_trace"]["graph_route_outcome"] == "no_matching_evidence"
     assert graph.call_args.kwargs["filters"]["ticker"] == ticker
     assert result["joint_trace"]["retrieval_called"]
     assert result["status"] == "NO_EVIDENCE"
@@ -186,3 +193,15 @@ def test_annual_evidence_requires_explicit_comparative_header(filing_year, heade
             assert scoped["derived_context"]["period_end"] == "2023-06-30"
             assert scoped["derived_context"]["as_reported"] == "$90"
             assert "$100" not in scoped["derived_context"]["answer_text"]
+
+
+def test_allowed_graph_backend_failure_is_not_coverage(rag_interfaces):
+    coverage, _ = rag_interfaces
+    coverage.check_coverage.return_value = {
+        "status": "unresolved", "targets": [], "entities": [], "message": "Unavailable in RAG.",
+    }
+    request = {**state("Describe Alphabet risks"), "filters": {}, "question_type": None}
+    graph = Mock(side_effect=ConnectionError)
+    result = run_joint_retrieval(request, "unavailable", True, {"graph": graph})
+    assert result["joint_trace"]["graph_coverage_status"] == "allowlist_only"
+    assert result["joint_trace"]["graph_route_outcome"] == "backend_unavailable"

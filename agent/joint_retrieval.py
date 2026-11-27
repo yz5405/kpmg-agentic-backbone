@@ -12,6 +12,8 @@ from agent.tools.rag_tool import _to_evidence
 _POSSESSIVE = re.compile(r"\b([A-Z][\w-]+)[’']s\b")
 _LATEST_QUARTER = re.compile(r"\b(?:latest|last|most recent)\s+(?:fiscal\s+)?quarter\b", re.I)
 _YOY = re.compile(r"\b(year over year|year-over-year|yoy|by what percentage)\b", re.I)
+_PAUSED_GRAPH_TICKERS = {"CAH", "INTC"}
+_GRAPH_FILING_ABSENT = {"AMZN"}  # Confirmed for the current Neo4j graph only.
 _EXHIBIT = re.compile(r"\bexhibit\s+21\b", re.I)
 
 
@@ -96,6 +98,16 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
         primary, intent = select_tool(
             state["query"], None if state["question_type"] == "relationship" else state["question_type"], graph_filters,
         )
+        tickers = graph_filters.get("ticker") or []
+        tickers = {tickers} if isinstance(tickers, str) else set(tickers)
+        if tickers & _PAUSED_GRAPH_TICKERS:
+            trace["graph_coverage_status"] = "paused"
+            tools = None
+        elif tickers & _GRAPH_FILING_ABSENT:
+            trace["graph_coverage_status"] = "no_filing_coverage"
+            tools = {name: tool for name, tool in (tools or {}).items() if name != "graph"}
+        elif tickers and tickers <= KNOWN_TICKERS:
+            trace["graph_coverage_status"] = "allowlist_only"
         if needs_fiscal_year(graph_filters):
             return {**result, "selected_tool": "clarification",
                     "answer": "Which fiscal year should I use for that quarter?"}
@@ -114,7 +126,10 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
                 trace.update(retrieval_called=True, backend_attempts=[attempt],
                              returned_count=attempt.get("returned_count", 0),
                              accepted_count=attempt.get("accepted_count", 0))
+                if alternate["status"] == "ERROR":
+                    trace["graph_route_outcome"] = alternate["retrieval_failure"]["type"]
                 if alternate["status"] == "NO_EVIDENCE":
+                    trace["graph_route_outcome"] = "no_matching_evidence"
                     alternate["answer"] = precheck["message"] + " GraphRAG found no verified evidence for the request."
                 return {**result, **alternate}
         if (tools and precheck["status"] != "partial" and primary in {"graph", "structured"} and primary in tools and graph_filters.get("ticker")
@@ -131,6 +146,10 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
                     or attempt.get("failure", {}).get("type") in {"invalid_request", "unsupported_filter"}):
                 return {**result, **primary_attempt}
         if precheck["status"] in {"none", "unresolved"}:
+            if graph_enabled and trace.get("graph_coverage_status") == "no_filing_coverage":
+                trace["graph_route_outcome"] = "no_filing_coverage"
+                return {**result, "selected_tool": "direct_reply",
+                        "answer": precheck["message"] + " The current graph does not contain filings for this company."}
             return {**result, "answer": precheck["message"], "selected_tool": "direct_reply"}
         if precheck["status"] == "no_target":
             _, intent = select_tool(state["query"], state["question_type"], {})

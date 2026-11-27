@@ -21,3 +21,22 @@ YoY growth from verified SEC tables. It keeps each filing date and
 declines conflicting or noncomparable inputs. Ranking, Exhibit 21
 counts, general financial arithmetic and live model acceptance remain
 outside this verification.
+
+## Code freeze coverage update
+
+The draft's six expansion tickers describe routing candidates. Data paused
+CAH and INTC. GOOGL, AMZN, WMT and WDC remain candidates, with filing
+availability evaluated separately. The current Neo4j graph excludes AMZN
+per GraphRAG's handoff, so the joint workflow skips that graph for AMZN.
+This does not establish anything about AMZN in a structured backend.
+
+The trace distinguishes `no_filing_coverage` (known graph exclusion),
+`backend_unavailable` (an attempted backend could not run), and
+`no_matching_evidence` (the attempted backend produced no accepted evidence).
+A ticker in the allowlist carries no filing guarantee. Revisit the AMZN
+exclusion when GraphRAG delivers updated coverage.
+
+Unspecified periods retain existing retrieval scope. Generated financial
+answers must identify the reporting period supported by their citations.
+Explicit latest-quarter queries still select the newest matching 10-Q
+for each company. Live answer behavior requires an LLM E2E run.
