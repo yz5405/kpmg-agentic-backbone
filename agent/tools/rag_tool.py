@@ -26,6 +26,8 @@ Behavior
 import os
 from typing import Literal, TypedDict
 
+from agent.joint_evidence import COMPANY_NAMES
+
 
 class RetrievalResult(TypedDict):
     evidence: list[dict]
@@ -57,9 +59,11 @@ def _load_retriever(filters: dict | None = None):
 
 
 def _to_evidence(chunk: dict) -> dict:
-    """RetrievedChunk -> {"text", "metadata"} with all RAG fields kept as-is."""
+    """RetrievedChunk -> {"text", "metadata"} preserving source fields and filling missing company names."""
     metadata = {key: value for key, value in chunk.items() if key not in ("text", "metadata")}
     metadata.update(chunk["metadata"])
+    if not metadata.get("company_name") and (name := COMPANY_NAMES.get(metadata.get("ticker"))):
+        metadata["company_name"] = name
     metadata["source"] = chunk["form"]  # Agent contract name for the filing type
     return {"text": chunk["text"], "metadata": metadata}
 

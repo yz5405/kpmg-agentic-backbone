@@ -1,6 +1,6 @@
 """Conditional routing for agent workflow results."""
 import re
-from datetime import datetime
+from datetime import date, datetime
 from itertools import takewhile
 from math import isfinite
 from typing import Protocol
@@ -39,7 +39,7 @@ _SIMPLE_FINANCIAL_QUERY = re.compile(
     r"(?:in|for)\s+(?:the\s+)?"
     r"(?:Q[1-4]\s+(?:FY|fiscal\s+year)\s*\d{4}|"
     r"(?:FY|fiscal\s+year)\s*\d{4}\s+Q[1-4]|"
-    r"three\s+months\s+ended\s+March\s+31,?\s+2026)\s*\??",
+    r"three\s+months\s+ended\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4})\s*\??",
     re.IGNORECASE,
 )
 _AMOUNT = r"-?\s*\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s+(?:thousand|million|billion|trillion))?"
@@ -74,6 +74,63 @@ _MSFT_ANNUAL_REVENUE_QUERY = re.compile(
     re.IGNORECASE,
 )
 _REVENUE_CONCEPT = "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax"
+
+
+_STRUCTURED_CONCEPTS = {
+    "revenue": {_REVENUE_CONCEPT, "us-gaap:Revenues", "us-gaap:SalesRevenueNet"},
+    "net income": {"us-gaap:NetIncomeLoss"},
+    "operating income": {"us-gaap:OperatingIncomeLoss"},
+}
+
+
+def evaluate_structured_lookup(query, evidence, filters):
+    """Accept only a single comparable consolidated USD fact for a scoped lookup."""
+    annual = _MSFT_ANNUAL_REVENUE_QUERY.fullmatch(query.strip())
+    if annual:
+        year = int(annual["year"])
+        return _select_msft_revenue(
+            evidence, form="10-K", start=f"{year-1:04d}-07-01", end=f"{year:04d}-06-30",
+        )
+    match = _SIMPLE_FINANCIAL_QUERY.fullmatch(query.strip())
+    ticker = filters.get("ticker")
+    if isinstance(ticker, list):
+        groups = [
+            evaluate_structured_lookup(
+                query, [row for row in evidence if row["metadata"].get("ticker") == company],
+                {**filters, "ticker": company},
+            )
+            for company in dict.fromkeys(ticker)
+        ]
+        return [item for group in groups for item in group] if all(groups) else []
+    requested_end = filters.get("reporting_period_end")
+    period = filters.get("fiscal_period")
+    if not match or not isinstance(ticker, str) or (not requested_end and (
+        not isinstance(filters.get("fiscal_year"), int) or period not in {"Q1", "Q2", "Q3"}
+    )):
+        return []
+    metric = " ".join(match["metric"].lower().split())
+    accepted = []
+    for item in evidence:
+        metadata = item["metadata"]
+        value = metadata.get("value_num")
+        if (
+            metadata.get("ticker") != ticker or metadata.get("form") != "10-Q"
+            or metadata.get("concept") not in _STRUCTURED_CONCEPTS[metric]
+            or metadata.get("dimensions") != [] or not metadata.get("fact_id")
+            or type(value) not in (int, float) or not isfinite(value)
+            or not item["text"].endswith(" USD")
+        ):
+            continue
+        try:
+            start = date.fromisoformat(metadata["period_start"])
+            end = date.fromisoformat(metadata["period_end"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not 75 <= (end - start).days <= 105 or (requested_end and end.isoformat() != requested_end):
+            continue
+        accepted.append(item)
+    facts = {(r["metadata"]["period_start"], r["metadata"]["period_end"], r["metadata"]["value_num"]) for r in accepted}
+    return accepted if len(facts) == 1 else []
 
 
 def evaluate_financial_evidence(

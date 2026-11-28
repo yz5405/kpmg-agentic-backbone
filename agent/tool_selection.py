@@ -4,12 +4,13 @@ import re
 from time import perf_counter
 from urllib.parse import urlsplit
 
-from agent.routing import evaluate_financial_evidence
+from agent.routing import evaluate_financial_evidence, evaluate_structured_lookup
 
 _RANKING = re.compile(r"\b(rank|highest|lowest|fastest|net margin|growth rate)\b", re.I)
 _ARITHMETIC = re.compile(r"\b(calculate|compute|add up|sum of|percentage change)\b", re.I)
 _NUMERIC = re.compile(r"\b(revenue|income|margin|cash flow|earnings|percent|ratio)\b", re.I)
 _GRAPH_CLAIMS = re.compile(r"\b(claims?|disclosures?)\b.*\b(about|mentioning|on)\b", re.I)
+_SUBSIDIARY = re.compile(r"\b(subsidiar(?:y|ies)|owns|acquired)\b", re.I)
 _TRAVERSAL = re.compile(r"\b(shared|both|connect|relationship|related|path|traverse|across|compare)\b", re.I)
 
 
@@ -26,10 +27,10 @@ def select_tool(query, question_type, filters):
     if question_type in {"metric_lookup", "structured_lookup"} or (
         _NUMERIC.search(query) and re.match(r"(?:what (?:was|is)|how much)\b", query, re.I)
     ):
-        if isinstance(filters.get("ticker"), str) and filters.get("fiscal_year"):
+        if filters.get("ticker") and (filters.get("fiscal_year") or filters.get("reporting_period_end")):
             return "structured", "financial"
         return "vector", "financial"
-    if _GRAPH_CLAIMS.search(query) and not _TRAVERSAL.search(query):
+    if (_GRAPH_CLAIMS.search(query) or _SUBSIDIARY.search(query)) and not _TRAVERSAL.search(query):
         return "graph", "narrative"
     if question_type == "relationship" or (
         _TRAVERSAL.search(query) and re.search(r"\b(relationship|connect|path|traverse|shared|related)\b", query, re.I)
@@ -74,7 +75,7 @@ def _has_sec_provenance(evidence):
 
 def _matches_filters(item, filters, tool):
     metadata = item["metadata"]
-    for key in ("ticker", "form", "fiscal_year", "fiscal_period"):
+    for key in ("ticker", "form", "fiscal_year", "fiscal_period", "reporting_period_end"):
         expected = filters.get(key)
         actual = metadata.get(key)
         if expected is None:
@@ -88,26 +89,65 @@ def _matches_filters(item, filters, tool):
     return True
 
 
-def run_tool_selection(state, tools, trace_id):
+def is_subsidiary_lookup(query):
+    return bool(_SUBSIDIARY.search(query))
+
+
+def _subsidiary_claim_matches(query, evidence):
+    location = re.search(r"\bin ([A-Z][A-Za-z-]+(?: [A-Z][A-Za-z-]+)*)[?.]?\s*$", query)
+    return bool(_SUBSIDIARY.search(evidence["text"]) and (
+        not location or re.search(rf"\b{re.escape(location[1])}\b", evidence["text"], re.I)
+    ))
+
+
+def needs_fiscal_year(filters):
+    return bool(filters.get("fiscal_period") and not (
+        filters.get("fiscal_year") or filters.get("reporting_period_end")
+    ))
+
+
+def run_tool_selection(state, tools, trace_id, *, route=None):
     filters = dict(state["filters"])
     if state["form"]:
         filters["form"] = state["form"]
-    primary, intent = select_tool(state["query"], state["question_type"], filters)
+    if needs_fiscal_year(filters):
+        return {
+            "status": "NO_EVIDENCE", "selected_tool": "clarification", "retrieval_attempts": [],
+            "answer": "Which fiscal year should I use for that quarter?", "filters": filters,
+            "logs": state["logs"],
+        }
+    primary, intent = route or select_tool(state["query"], state["question_type"], filters)
+    if filters.get("reporting_period_end") and not filters.get("fiscal_year"):
+        filters.pop("fiscal_period", None)
     alternative = {"structured": "vector", "graph": "vector"}.get(primary)
+    if primary == "graph" and is_subsidiary_lookup(state["query"]):
+        alternative = None
     if primary == "vector" and intent == "financial" and filters.get("fiscal_year"):
         alternative = "structured"
 
     attempts, logs, accepted = [], [], []
     for tool in dict.fromkeys((primary, alternative)):
-        if tool is None:
-            break
+        if tool not in tools:
+            continue
         start = perf_counter()
+        retry_count = 0
+        request = {"query": state["query"], "filters": filters, "top_k": state["top_k"], "trace_id": trace_id}
         try:
-            result = tools[tool](query=state["query"], filters=filters, top_k=state["top_k"], trace_id=trace_id)
+            try:
+                result = tools[tool](**request)
+            except Exception as exc:
+                if tool != "graph" or type(exc).__name__ != "RetrievalUnavailableError":
+                    raise
+                retry_count = 1
+                result = tools[tool](**request)
             rows = result["evidence"] if isinstance(result, dict) else result
             signal = result.get("evidence_status") if isinstance(result, dict) else None
             matched = [row for row in rows if _has_sec_provenance(row) and _matches_filters(row, filters, tool)]
-            if intent == "financial":
+            if tool == "graph" and is_subsidiary_lookup(state["query"]):
+                matched = [row for row in matched if _subsidiary_claim_matches(state["query"], row)]
+            if intent == "financial" and tool == "structured":
+                accepted = evaluate_structured_lookup(state["query"], matched, filters)
+            elif intent == "financial":
                 accepted = evaluate_financial_evidence(
                     query=state["query"], rag_evidence=matched if tool == "vector" else [],
                     graphrag_evidence=matched if tool != "vector" else [],
@@ -122,6 +162,7 @@ def run_tool_selection(state, tools, trace_id):
             }
         except Exception as exc:
             attempt = {"tool": tool, "outcome": "failed", "failure": describe_retrieval_error(exc)}
+        attempt["retry_count"] = retry_count
         attempt["latency_ms"] = round((perf_counter() - start) * 1000, 2)
         attempts.append(attempt)
         detail = attempt.get("failure", {}).get("type", attempt["outcome"])
@@ -143,7 +184,7 @@ def run_tool_selection(state, tools, trace_id):
         "should_try_graphrag": len(attempts) > 1,
         "used_tool": attempts[-1]["tool"] if accepted else None,
         "evidence": accepted,
-        "evidence_status": attempts[-1].get("evidence_status"),
+        "evidence_status": attempts[-1].get("evidence_status") if attempts else None,
         "status": "SUCCESS" if accepted else "ERROR" if failure else "NO_EVIDENCE",
         "error": failure["reason"] if failure and not accepted else None,
         "logs": state["logs"] + logs,

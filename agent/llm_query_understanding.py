@@ -86,6 +86,7 @@ def _validate(parsed: dict) -> dict:
 
     return {
         "ticker": ticker,
+        "company": parsed.get("company") if isinstance(parsed.get("company"), str) else None,
         "tickers": normalized_tickers,
         "fiscal_year": fiscal_year,
         "fiscal_period": fiscal_period,

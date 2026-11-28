@@ -48,7 +48,14 @@
       ].filter(Boolean).join(" · ");
       panel.append(detail);
       const links = document.createElement("ul");
-      for (const citation of result.citations || []) {
+      const answerCitations = result.citations || [];
+      const preview = !answerCitations.length && (result.retrieval_citations || []).length;
+      if (preview) {
+        const label = document.createElement("p");
+        label.textContent = "Retrieved sources";
+        panel.append(label);
+      }
+      for (const citation of preview ? result.retrieval_citations : answerCitations) {
         let url;
         try { url = new URL(citation.source_url); } catch { continue; }
         if (url.protocol !== "https:" || !["www.sec.gov", "sec.gov"].includes(url.host)

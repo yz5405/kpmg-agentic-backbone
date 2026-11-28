@@ -7,6 +7,12 @@ from typing import Any, Literal, TypedDict
 class AgentGraphState(TypedDict):
     """State shared across LangGraph nodes."""
 
+    company: str | None
+    calculation_status: str
+    calculation_reason: str | None
+    joint_trace: dict
+    query_understanding_ms: float
+    answer_ms: float
     selected_tool: str
     used_tool: str | None
     retrieval_attempts: list[dict]

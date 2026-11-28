@@ -16,6 +16,8 @@ Return a JSON object with exactly: status (SUCCESS or NO_EVIDENCE),
 answer (string), citation_ids (list of integer evidence IDs).
 For SUCCESS, use inline references such as [1] in the answer and list exactly
 the referenced IDs in citation_ids. At least one valid reference is required.
+If coverage_notice is present, explain the missing coverage.
+For financial figures, state the reporting period supported by the cited evidence.
 For NO_EVIDENCE, use an empty citation_ids list. Never output source metadata."""
 
 
@@ -35,7 +37,7 @@ class AnswerGenerator:
     def __call__(self, state: dict) -> dict:
         result = {"answer": None, "citations": [], "model": None,
                   "llm_calls": 0, "token_usage": None}
-        if state.get("status") == "ERROR" or state.get("error"):
+        if state.get("status") == "ERROR" or state.get("error") or state.get("calculation_status") == "blocked":
             return result
         evidence = state.get("evidence", [])
         if state.get("status") == "NO_EVIDENCE" or not evidence:
@@ -43,9 +45,13 @@ class AnswerGenerator:
                     "answer": "Insufficient evidence to answer this question."}
         try:
             # Keep provenance local. The model selects IDs, never writes citation metadata.
-            passages = [{"id": i, "text": item["text"], "metadata": item.get("metadata", {})}
+            passages = [{"id": i, "text": item.get("derived_context", {}).get("answer_text", item["text"]), "metadata": item.get("metadata", {})}
                         for i, item in enumerate(evidence, 1)]
-            payload = json.dumps({"question": state["query"], "evidence": passages}, ensure_ascii=False)
+            payload_data = {"question": state["query"], "evidence": passages}
+            precheck = (state.get("joint_trace") or {}).get("precheck") or {}
+            if precheck.get("status") == "partial":
+                payload_data["coverage_notice"] = precheck["message"]
+            payload = json.dumps(payload_data, ensure_ascii=False)
             if len(payload) > self.max_context_chars:
                 raise ValueError("context exceeds configured limit")
         except (ValueError, KeyError, TypeError):
@@ -105,6 +111,12 @@ class AnswerGenerator:
                 if not answer.strip() or not ids or refs != set(ids):
                     raise ValueError("Answer references must match citations")
                 unique_ids = list(dict.fromkeys(ids))
+                driver_ids = {
+                    index for index, item in enumerate(evidence, 1)
+                    if item.get("metadata", {}).get("answer_evidence_role") == "quarter_driver"
+                }
+                if driver_ids and driver_ids.isdisjoint(unique_ids):
+                    raise ValueError("Quarterly drivers must cite a supporting narrative disclosure")
                 citations = [
                     {**deepcopy(evidence[i - 1].get("metadata", {})), "evidence_id": i}
                     for i in unique_ids
