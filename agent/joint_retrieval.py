@@ -74,8 +74,8 @@ def _graph_filters(state, precheck):
         ("forms", "form"), ("period_ends", "reporting_period_end"),
     ):
         values = periods.get(source) or []
-        if len(values) == 1:
-            filters[destination] = values[0]
+        if values:
+            filters[destination] = values[0] if len(values) == 1 else values
     return filters
 
 
@@ -236,12 +236,15 @@ def run_joint_retrieval(state, trace_id, graph_enabled, tools=None):
                 and precheck["status"] != "partial"
                 and (not accepted or envelope["evidence_status"] in {"weak", "empty"})):
             alternate = run_tool_selection(graph_state, {"graph": tools["graph"]}, trace_id, route=("graph", "narrative"))
-            vector_attempt = {"tool": "vector", "outcome": "insufficient_evidence",
-                              "returned_count": len(rows), "accepted_count": 0,
+            vector_attempt = {"tool": "vector", "outcome": "accepted" if accepted else "insufficient_evidence",
+                              "returned_count": len(rows), "accepted_count": len(accepted),
                               "evidence_status": envelope["evidence_status"],
                               "latency_ms": trace["latency_ms"]["retrieval"]}
             alternate["retrieval_attempts"].insert(0, vector_attempt)
             trace["backend_attempts"] = alternate["retrieval_attempts"]
+            if accepted and not alternate["evidence"]:
+                alternate.update(evidence=accepted, status="SUCCESS", used_tool="vector",
+                                 evidence_status=envelope["evidence_status"], error=None)
             trace["accepted_count"] = len(alternate["evidence"])
             return {**result, **alternate, "selected_tool": "vector", "should_try_graphrag": True,
                     "weak_reasons": envelope["weak_reasons"]}

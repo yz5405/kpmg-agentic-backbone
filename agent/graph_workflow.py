@@ -9,6 +9,7 @@ No LLM API key is required.
 """
 
 from typing import Callable
+import re
 from time import perf_counter
 
 from langgraph.graph import StateGraph, START, END
@@ -51,6 +52,15 @@ def build_graph(
                 if parsed.get(key) is not None
             }
 
+            if tools is not None:
+                from agent.query_parser import explicit_period_end
+
+                if period_end := explicit_period_end(state["query"]):
+                    filters["reporting_period_end"] = period_end
+                    # A calendar date does not identify the issuer's fiscal year.
+                    if not re.search(r"\b(?:FY|fiscal year)\s*\d", state["query"], re.I):
+                        filters.pop("fiscal_year", None)
+                        filters.pop("fiscal_period", None)
             tickers = parsed.get("tickers") or []
             if len(tickers) > 1:
                 filters["ticker"] = tickers

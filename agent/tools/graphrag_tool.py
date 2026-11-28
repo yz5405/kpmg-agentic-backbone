@@ -1,6 +1,7 @@
 """Adapt GraphRAG retrieval to Agent evidence."""
 
 import re
+from itertools import product
 
 from agent.tools.rag_tool import _to_evidence
 
@@ -33,9 +34,19 @@ def _retrieve_evidence(search, query: str, filters: dict | None, top_k: int, tra
     from graphrag.contract import FilterNotSupportedError
 
     retrieval_filters = {key: value for key, value in (filters or {}).items() if value is not None}
-    if retrieval_filters.keys() - {"ticker", "form", "fiscal_year", "fiscal_period", "reporting_period_end"}:
+    if retrieval_filters.keys() - {"ticker", "form", "fiscal_year", "fiscal_period", "reporting_period_end", "section"}:
         raise FilterNotSupportedError("Agent GraphRAG does not support this filter")
-    rows = search(query=query, filters=retrieval_filters, top_k=top_k, trace_id=trace_id)
+    if "section" in retrieval_filters:
+        retrieval_filters["section"] = re.sub(r"[\s_-]+", "-", retrieval_filters["section"].strip().lower())
+    # Only ticker is documented as list-valued. Preserve all other requested
+    # scopes using scalar searches and the same caller trace ID.
+    split_keys = [key for key, value in retrieval_filters.items() if key != "ticker" and isinstance(value, list)]
+    rows = []
+    for values in product(*(retrieval_filters[key] for key in split_keys)):
+        scope = {**retrieval_filters, **dict(zip(split_keys, values))}
+        if scope.get("reporting_period_end") and not scope.get("fiscal_year"):
+            scope.pop("fiscal_period", None)
+        rows.extend(search(query=query, filters=scope, top_k=top_k, trace_id=trace_id))
     evidence = [_to_evidence(row) for row in rows]
     for item in evidence:
         metadata = item["metadata"]

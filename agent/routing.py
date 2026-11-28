@@ -39,7 +39,7 @@ _SIMPLE_FINANCIAL_QUERY = re.compile(
     r"(?:in|for)\s+(?:the\s+)?"
     r"(?:Q[1-4]\s+(?:FY|fiscal\s+year)\s*\d{4}|"
     r"(?:FY|fiscal\s+year)\s*\d{4}\s+Q[1-4]|"
-    r"three\s+months\s+ended\s+March\s+31,?\s+2026)\s*\??",
+    r"three\s+months\s+ended\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4})\s*\??",
     re.IGNORECASE,
 )
 _AMOUNT = r"-?\s*\$?\s*(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s+(?:thousand|million|billion|trillion))?"
@@ -93,6 +93,15 @@ def evaluate_structured_lookup(query, evidence, filters):
         )
     match = _SIMPLE_FINANCIAL_QUERY.fullmatch(query.strip())
     ticker = filters.get("ticker")
+    if isinstance(ticker, list):
+        groups = [
+            evaluate_structured_lookup(
+                query, [row for row in evidence if row["metadata"].get("ticker") == company],
+                {**filters, "ticker": company},
+            )
+            for company in dict.fromkeys(ticker)
+        ]
+        return [item for group in groups for item in group] if all(groups) else []
     requested_end = filters.get("reporting_period_end")
     period = filters.get("fiscal_period")
     if not match or not isinstance(ticker, str) or (not requested_end and (

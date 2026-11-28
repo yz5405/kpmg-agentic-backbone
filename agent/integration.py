@@ -44,9 +44,16 @@ def run_integrated_agent(
 
     joint_retrieval = None
     if os.getenv("KPMG_RAG_BACKEND") == "real" and os.getenv("KPMG_COVERAGE_PRECHECK", "0") == "1":
+        joint_tools = tools
+        if joint_tools is None and graphrag_retriever is not None:
+            arm = fallback_tool
+            if arm in {"graph", "structured"}:
+                joint_tools = {arm: lambda query, filters, top_k, trace_id: graphrag_retriever(
+                    query=query, filters=filters, top_k=top_k,
+                )}
         joint_retrieval = partial(
             run_joint_retrieval, trace_id=trace_id, graph_enabled=os.getenv("KPMG_GRAPHRAG_ENABLED") == "1",
-            tools=tools,
+            tools=joint_tools,
         )
 
     # Run LangGraph with actual team implementations.

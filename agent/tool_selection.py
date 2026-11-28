@@ -27,7 +27,7 @@ def select_tool(query, question_type, filters):
     if question_type in {"metric_lookup", "structured_lookup"} or (
         _NUMERIC.search(query) and re.match(r"(?:what (?:was|is)|how much)\b", query, re.I)
     ):
-        if isinstance(filters.get("ticker"), str) and (filters.get("fiscal_year") or filters.get("reporting_period_end")):
+        if filters.get("ticker") and (filters.get("fiscal_year") or filters.get("reporting_period_end")):
             return "structured", "financial"
         return "vector", "financial"
     if (_GRAPH_CLAIMS.search(query) or _SUBSIDIARY.search(query)) and not _TRAVERSAL.search(query):

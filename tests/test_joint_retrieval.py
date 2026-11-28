@@ -205,3 +205,77 @@ def test_allowed_graph_backend_failure_is_not_coverage(rag_interfaces):
     result = run_joint_retrieval(request, "unavailable", True, {"graph": graph})
     assert result["joint_trace"]["graph_coverage_status"] == "allowlist_only"
     assert result["joint_trace"]["graph_route_outcome"] == "backend_unavailable"
+
+
+def test_graph_filters_preserve_multiple_fiscal_years():
+    from agent.joint_retrieval import _graph_filters
+
+    filters = _graph_filters(state(), {"status": "all_hit", "entities": [{"ticker": "MSFT"}, {"ticker": "AAPL"}],
+                                       "periods": {"fiscal_years": [2024, 2025], "fiscal_periods": ["Q3"]}})
+    assert filters == {"ticker": ["MSFT", "AAPL"], "fiscal_year": [2024, 2025], "fiscal_period": "Q3"}
+
+
+@pytest.mark.parametrize("graph_reply", [[], ConnectionError()])
+def test_failed_graph_fallback_preserves_accepted_vector(rag_interfaces, graph_reply):
+    coverage, vector = rag_interfaces
+    accession = "0001193125-26-191507"
+    coverage.check_coverage.return_value = {
+        "status": "all_hit", "targets": [{"ticker": "MSFT", "status": "hit", "accessions": [accession]}],
+        "entities": [{"ticker": "MSFT"}], "message": "ok",
+    }
+    vector.return_value = {"results": [{
+        "text": "The filing describes competition risks.", "metadata": {}, "ticker": "MSFT",
+        "form": "10-Q", "accession_number": accession, "chunk_id": "c1",
+        "source_url": "https://www.sec.gov/Archives/edgar/data/789019/000119312526191507/sec.htm",
+    }], "evidence_status": "weak", "weak_reasons": ["sparse"]}
+    graph = Mock(side_effect=graph_reply if isinstance(graph_reply, Exception) else None,
+                 return_value=graph_reply)
+    result = run_joint_retrieval({**state("Explain Microsoft competition risks"), "question_type": None},
+                                 "fallback", True, {"graph": graph})
+    graph.assert_called_once()
+    assert result["status"] == "SUCCESS" and result["used_tool"] == "vector"
+    assert result["evidence"][0]["metadata"]["chunk_id"] == "c1"
+    assert result["joint_trace"]["accepted_count"] == 1
+
+
+def test_coverage_enabled_forwards_legacy_graph_arm(monkeypatch):
+    from agent import integration
+
+    monkeypatch.setenv("KPMG_RAG_BACKEND", "real")
+    monkeypatch.setenv("KPMG_COVERAGE_PRECHECK", "1")
+    monkeypatch.setenv("KPMG_GRAPHRAG_ENABLED", "1")
+    graph = Mock(return_value=[])
+    runner = Mock(return_value={"logs": []})
+    monkeypatch.setattr(integration, "run_graph_agent", runner)
+    integration.run_integrated_agent("search", graphrag_retriever=graph, fallback_tool="graph", trace_id="test")
+    joint = runner.call_args.kwargs["joint_retrieval"]
+    joint.keywords["tools"]["graph"](query="search", filters={}, top_k=15, trace_id="test")
+    graph.assert_called_once_with(query="search", filters={}, top_k=15)
+
+
+def test_graph_adapter_splits_years_retains_tickers_and_normalizes_section(monkeypatch):
+    from agent.tools.graphrag_tool import _retrieve_evidence
+
+    contract = ModuleType("graphrag.contract")
+    contract.FilterNotSupportedError = ValueError
+    monkeypatch.setitem(sys.modules, "graphrag.contract", contract)
+    search = Mock(return_value=[])
+    _retrieve_evidence(search, "disclosures", {"ticker": ["MSFT", "AAPL"],
+                       "fiscal_year": [2025, 2026], "fiscal_period": "Q3",
+                       "section": "Part I Item 1A"}, 15, "scope")
+    requests = [call.kwargs for call in search.call_args_list]
+    assert [item["filters"]["fiscal_year"] for item in requests] == [2025, 2026]
+    assert all(item["filters"]["ticker"] == ["MSFT", "AAPL"] and
+               item["filters"]["fiscal_period"] == "Q3" and
+               item["filters"]["section"] == "part-i-item-1a" and
+               item["trace_id"] == "scope" for item in requests)
+
+
+def test_explicit_calendar_date_routes_structured_without_inferred_fiscal_year():
+    from agent.query_parser import explicit_period_end
+    from agent.tool_selection import select_tool
+
+    query = "What was Apple's revenue for the three months ended March 31, 2026?"
+    filters = {"ticker": "AAPL", "reporting_period_end": explicit_period_end(query)}
+    assert filters["reporting_period_end"] == "2026-03-31"
+    assert select_tool(query, None, filters) == ("structured", "financial")

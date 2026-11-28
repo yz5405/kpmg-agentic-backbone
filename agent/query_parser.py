@@ -1,6 +1,7 @@
 """Query understanding and financial filter extraction."""
 
 import re
+from datetime import datetime
 
 # Supported company name -> ticker mapping.
 # Keep this in sync with the ticker universe the RAG team actually retrieves.
@@ -95,3 +96,15 @@ def _extract_fiscal_year(query: str) -> int | None:
 def _extract_fiscal_period(query: str) -> str | None:
     match = _QUARTER_RE.search(query)
     return f"Q{match.group(1)}" if match else None
+
+
+
+def explicit_period_end(query: str) -> str | None:
+    """Extract one explicitly named period end, without inferring fiscal labels."""
+    dates = re.findall(r"\bended\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})\b", query, re.I)
+    if len(dates) != 1:
+        return None
+    try:
+        return datetime.strptime(dates[0].replace(",", ""), "%B %d %Y").date().isoformat()
+    except ValueError:
+        return None
